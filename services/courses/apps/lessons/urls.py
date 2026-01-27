@@ -17,15 +17,4 @@ urlpatterns = [
         views.LessonContentDetailView.as_view(),
         name="lesson-content-detail",
     ),
-    # ==================== ЗАДАЧИ УРОКОВ ====================
-    path(
-        "<slug:lesson_slug>/tasks/",
-        views.LessonTaskListView.as_view(),
-        name="lesson-task-list",
-    ),
-    path(
-        "<slug:lesson_slug>/tasks/<int:id>/",
-        views.LessonTaskDetailView.as_view(),
-        name="lesson-task-detail",
-    ),
 ]

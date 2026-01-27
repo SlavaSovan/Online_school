@@ -100,17 +100,6 @@ lessons_urlpatterns = [
         lessons_views.AdminLessonContentDetailView.as_view(),
         name="admin-lesson-content-detail",
     ),
-    # ======================= ЗАДАНИЯ (админ) ========================
-    path(
-        "lesson-tasks/",
-        lessons_views.AdminLessonTaskListView.as_view(),
-        name="admin-lesson-content-list",
-    ),
-    path(
-        "lesson-tasks/<int:id>/",
-        lessons_views.AdminLessonTaskDetailView.as_view(),
-        name="admin-lesson-content-detail",
-    ),
 ]
 
 urlpatterns = courses_urlpatterns + modules_urlpatterns + lessons_urlpatterns

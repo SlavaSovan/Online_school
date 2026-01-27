@@ -212,8 +212,8 @@ class LessonTaskSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = LessonTask
-        fields = ("id", "title", "lesson", "external_task_uuid", "order")
-        read_only_fields = ("id",)
+        fields = ("task_uuid", "title", "lesson", "order")
+        read_only_fields = ("task_uuid", "title", "lesson", "order")
 
 
 class LessonSerializer(serializers.ModelSerializer):

@@ -47,9 +47,9 @@ class LessonContent(models.Model):
 
 
 class LessonTask(models.Model):
-    title = models.CharField(max_length=255, blank=True, null=True)
+    task_uuid = models.UUIDField(primary_key=True, unique=True)
+    title = models.CharField(max_length=255)
     lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name="tasks")
-    external_task_uuid = models.UUIDField()  # from Task Microservice
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -57,4 +57,4 @@ class LessonTask(models.Model):
     order = models.PositiveIntegerField(default=1)
 
     def __str__(self):
-        return f"Task {self.external_task_uuid}"
+        return f"Task {self.task_uuid}"
