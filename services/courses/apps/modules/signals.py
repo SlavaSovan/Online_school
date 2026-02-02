@@ -1,32 +1,25 @@
-import transliterate
-from django.utils.text import slugify
-from django.db.models.signals import pre_save
+from django.db.models.signals import pre_save, post_save, post_delete
 from django.dispatch import receiver
+
+from apps.utils.signal_helpers import (
+    handle_slug_on_save,
+    invalidate_module_related_cache,
+    update_course_counters,
+    update_module_counters,
+)
 from .models import Module
 
 
-def smart_slugify(text):
-    """Создает slug с поддержкой кириллицы"""
-    try:
-        transliterated = transliterate.translit(text, "ru", reversed=True)
-        return slugify(transliterated)
-    except:
-        return slugify(text)
-
-
 @receiver(pre_save, sender=Module)
-def update_course_slug(sender, instance, **kwargs):
-    """
-    Автоматически обновляет slug при изменении title
-    """
-    if instance.pk:
-        try:
-            old_instance = Module.objects.get(pk=instance.pk)
-            if old_instance.title != instance.title:
-                instance.slug = smart_slugify(instance.title)
-        except Module.DoesNotExist:
-            if not instance.slug:
-                instance.slug = smart_slugify(instance.title)
-    else:
-        if not instance.slug:
-            instance.slug = smart_slugify(instance.title)
+def update_module_slug(sender, instance, **kwargs):
+    """Автоматически обновляет slug при изменении title"""
+    handle_slug_on_save(sender, instance)
+
+
+@receiver([post_save, post_delete], sender=Module)
+def handle_module_cache_invalidation(sender, instance, **kwargs):
+    """Обработка инвалидации кэша при изменении модуля"""
+    invalidate_module_related_cache(instance)
+
+    update_module_counters(instance)
+    update_course_counters(instance.course)

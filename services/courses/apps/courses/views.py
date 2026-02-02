@@ -6,6 +6,9 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
+from apps.utils.cache_decorator import cache_response
+from apps.utils.cache_invalidator import CacheInvalidator
+
 from .models import Category, Course, CourseMentor, EnrollmentCache
 from .serializers import (
     CourseListSerializer,
@@ -35,6 +38,11 @@ class CourseListView(generics.ListAPIView):
     ordering_fields = ["created_at", "price", "lessons_count"]
     ordering = ["-created_at"]
 
+    @cache_response(timeout=300, key_prefix="courses_list")
+    def list(self, request, *args, **kwargs):
+        """Кэшируем список курсов на 5 минут"""
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
         queryset = Course.objects.filter(status="published")
 
@@ -46,6 +54,10 @@ class CategoryListView(generics.ListAPIView):
 
     serializer_class = CategorySerializer
     permission_classes = [permissions.AllowAny]
+
+    @cache_response(timeout=600, key_prefix="categories_list")  # 10 минут
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
 
     def get_queryset(self):
         return Category.objects.all().order_by("name")
@@ -59,6 +71,10 @@ class CategoryDetailView(generics.RetrieveAPIView):
     permission_classes = [permissions.AllowAny]
     lookup_field = "slug"
 
+    @cache_response(timeout=600, key_prefix="category_detail")
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
+
 
 class CategoryCoursesView(generics.ListAPIView):
     """Курсы определенной категории с фильтрацией"""
@@ -68,6 +84,10 @@ class CategoryCoursesView(generics.ListAPIView):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_class = CourseFilter
     search_fields = ["title", "description"]
+
+    @cache_response(timeout=300, key_prefix="category_courses")
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
 
     def get_queryset(self):
         category_slug = self.kwargs.get("slug")
@@ -88,12 +108,33 @@ class CourseDetailPublicView(generics.RetrieveAPIView):
     lookup_field = "slug"
     permission_classes = [permissions.AllowAny]
 
+    @cache_response(timeout=300, key_prefix="course_detail_public")
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
+
     def get_queryset(self):
         return (
             Course.objects.filter(status="published")
             .select_related("category")
-            .prefetch_related("mentors", "modules")
+            .prefetch_related(
+                "mentors",
+                "modules__lessons__content",
+                "modules__lessons__tasks",
+            )
         )
+
+    def get_object(self):
+        obj = super().get_object()
+
+        if hasattr(obj, "modules_prefetched"):
+            # modules уже prefetched
+            for module in obj.modules_prefetched:
+                if hasattr(module, "lessons_prefetched"):
+                    for lesson in module.lessons_prefetched:
+                        if hasattr(lesson, "content_prefetched"):
+                            lesson.content_prefetched = lesson.content_prefetched
+
+        return obj
 
 
 class CourseDetailPrivateView(generics.RetrieveAPIView):
@@ -102,6 +143,12 @@ class CourseDetailPrivateView(generics.RetrieveAPIView):
     serializer_class = CourseDetailSerializer
     lookup_field = "slug"
     permission_classes = [IsAuthenticated]
+
+    def retrieve(self, request, *args, **kwargs):
+        cache_key_prefix = f"course_detail_private_{kwargs.get('slug')}"
+        return cache_response(
+            timeout=180, key_prefix=cache_key_prefix, vary_on_user=True
+        )(super().retrieve)(request, *args, **kwargs)
 
     def get_queryset(self):
         return (
@@ -148,7 +195,9 @@ class CourseCreateView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         mentor_id = self.request.user_data.get("id")
-        serializer.save(owner_mentor_id=mentor_id)
+        course = serializer.save(owner_mentor_id=mentor_id)
+
+        CacheInvalidator.invalidate_course_cache(course_slug=course.slug)
 
 
 class CourseUpdateView(generics.UpdateAPIView):
@@ -158,6 +207,11 @@ class CourseUpdateView(generics.UpdateAPIView):
     serializer_class = CourseCreateUpdateSerializer
     lookup_field = "slug"
     permission_classes = [IsMentor]
+
+    def perform_update(self, serializer):
+        course = serializer.save()
+
+        CacheInvalidator.invalidate_course_cache(course_slug=course.slug)
 
     def get_object(self):
         course = super().get_object()
@@ -200,6 +254,10 @@ class CourseMentorsView(generics.ListCreateAPIView):
             return [permissions.AllowAny()]
         return [IsMentor()]
 
+    @cache_response(timeout=300, key_prefix="course_mentors")
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
         course_slug = self.kwargs.get("slug")
         course = get_object_or_404(Course, slug=course_slug)
@@ -214,7 +272,9 @@ class CourseMentorsView(generics.ListCreateAPIView):
         if course.owner_mentor_id != user_id:
             raise PermissionDenied("Only course owner can add mentors")
 
-        serializer.save(course=course)
+        course_mentor = serializer.save(course=course)
+
+        CacheInvalidator.invalidate_course_cache(course_slug=course_slug)
 
 
 class CourseMentorDeleteView(generics.DestroyAPIView):
@@ -222,6 +282,12 @@ class CourseMentorDeleteView(generics.DestroyAPIView):
 
     queryset = CourseMentor.objects.all()
     permission_classes = [IsMentor]
+
+    def perform_destroy(self, instance):
+        course_slug = instance.course.slug
+        super().perform_destroy(instance)
+
+        CacheInvalidator.invalidate_course_cache(course_slug=course_slug)
 
     def get_object(self):
         course_slug = self.kwargs.get("slug")
@@ -271,7 +337,9 @@ class EnrollmentView(generics.CreateAPIView):
             #         "Course requires payment. No confirmed payment found for this user/course."
             #     )
 
-        serializer.save(course=course, user_id=user_id)
+        enrollment = serializer.save(course=course, user_id=user_id)
+
+        CacheInvalidator.invalidate_course_cache(course_slug=course_slug)
 
 
 class MyEnrollmentsView(generics.ListAPIView):
@@ -279,6 +347,14 @@ class MyEnrollmentsView(generics.ListAPIView):
 
     serializer_class = CourseListSerializer
     permission_classes = [IsAuthenticated]
+
+    def list(self, request, *args, **kwargs):
+        user_id = self.request.user_data.get("id")
+        cache_key_prefix = f"my_enrollments_user_{user_id}"
+
+        return cache_response(timeout=180, key_prefix=cache_key_prefix)(super().list)(
+            request, *args, **kwargs
+        )
 
     def get_queryset(self):
         user_id = self.request.user_data.get("id")
@@ -294,6 +370,14 @@ class MyCoursesView(generics.ListAPIView):
 
     serializer_class = CourseListSerializer
     permission_classes = [IsMentor]
+
+    def list(self, request, *args, **kwargs):
+        user_id = self.request.user_data.get("id")
+        cache_key_prefix = f"my_courses_user_{user_id}"
+
+        return cache_response(timeout=180, key_prefix=cache_key_prefix)(super().list)(
+            request, *args, **kwargs
+        )
 
     def get_queryset(self):
         mentor_id = self.request.user_data.get("id")

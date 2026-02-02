@@ -39,6 +39,8 @@ class CourseDetailSerializer(serializers.ModelSerializer):
     modules = serializers.SerializerMethodField()
     mentors = serializers.SerializerMethodField()
 
+    modules_count = serializers.SerializerMethodField()
+
     class Meta:
         model = Course
         fields = (
@@ -49,6 +51,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
             "owner_mentor_id",
             "price",
             "lessons_count",
+            "modules_count",
             "mentors",
             "modules",
             "status",
@@ -65,6 +68,12 @@ class CourseDetailSerializer(serializers.ModelSerializer):
     def get_mentors(self, obj):
         mentors_qs = obj.mentors.all()
         return CourseMentorSerializer(mentors_qs, many=True).data
+
+    def get_modules_count(self, obj):
+        """Количество модулей - можно получить из prefetch_related"""
+        if hasattr(obj, "modules_prefetched"):
+            return len(obj.modules_prefetched)
+        return obj.modules.count()
 
 
 class CourseCreateUpdateSerializer(serializers.ModelSerializer):

@@ -28,6 +28,7 @@ THIRD_PARTY_APPS = [
     "django_filters",
     "corsheaders",
     "drf_spectacular",
+    "storages",
 ]
 
 LOCAL_APPS = [
@@ -129,3 +130,63 @@ MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
 
 USER_SERVICE_URL = "http://localhost:8001"
+
+
+AWS_ACCESS_KEY_ID = os.getenv("S3_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.getenv("S3_SECRET_ACCESS_KEY", "")
+AWS_STORAGE_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "course-content")
+AWS_S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", None)
+AWS_S3_REGION_NAME = os.getenv("S3_REGION", "us-east-1")
+AWS_S3_FILE_OVERWRITE = False
+AWS_DEFAULT_ACL = "private"  # Файлы приватные по умолчанию
+AWS_QUERYSTRING_AUTH = True  # Используем signed URLs
+AWS_QUERYSTRING_EXPIRE = 3600  # Срок жизни ссылок: 1 час
+
+MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", 1024))
+ALLOWED_CONTENT_TYPES = {
+    "markdown": [".md", ".markdown"],
+    "image": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"],
+    "video": [".mp4", ".avi", ".mov", ".wmv", ".flv", ".mkv", ".webm", ".m4v"],
+    "file": [
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
+        ".zip",
+        ".rar",
+        ".txt",
+        ".rtf",
+        ".csv",
+        ".json",
+    ],
+}
+
+
+DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+
+
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "PARSER_CLASS": "redis.connection.HiredisParser",
+            "CONNECTION_POOL_CLASS": "redis.BlockingConnectionPool",
+            "CONNECTION_POOL_CLASS_KWARGS": {
+                "max_connections": 50,
+                "timeout": 20,
+            },
+            "MAX_CONNECTIONS": 1000,
+            "PICKLE_VERSION": -1,
+        },
+        "KEY_PREFIX": "courses_service",  # Префикс для всех ключей
+        "TIMEOUT": 300,  # Дефолтный таймаут
+    }
+}
+
+SESSION_ENGINE = "django.contrib.sessions.backends.cache"
+SESSION_CACHE_ALIAS = "default"

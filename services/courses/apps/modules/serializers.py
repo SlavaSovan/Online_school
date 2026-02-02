@@ -7,6 +7,7 @@ from apps.lessons.serializers import (
 
 class ModuleDetailSerializer(serializers.ModelSerializer):
     lessons = serializers.SerializerMethodField()
+    lessons_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Module
@@ -18,14 +19,27 @@ class ModuleDetailSerializer(serializers.ModelSerializer):
             "course",
             "order",
             "lessons",
+            "lessons_count",
             "created_at",
             "updated_at",
         )
         read_only_fields = ("id", "slug", "created_at", "updated_at")
 
     def get_lessons(self, obj):
-        qs = obj.lessons.all().order_by("order")
-        return LessonSerializer(qs, many=True).data
+        if hasattr(obj, "lessons_prefetched"):
+            qs = obj.lessons_prefetched
+        else:
+            qs = obj.lessons.all()
+
+        qs = sorted(qs, key=lambda x: x.order)
+
+        return LessonSerializer(qs, many=True, context=self.context).data
+
+    def get_lessons_count(self, obj):
+        """Количество уроков - можно получить из prefetch_related"""
+        if hasattr(obj, "lessons_prefetched"):
+            return len(obj.lessons_prefetched)
+        return obj.lessons.count()
 
 
 class ModuleWithLessonsSerializer(serializers.ModelSerializer):

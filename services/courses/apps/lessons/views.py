@@ -4,11 +4,14 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db.models import Prefetch
 
 from apps.lessons.filters import (
     AdminLessonContentFilter,
     AdminLessonFilter,
 )
+from apps.utils.cache_decorator import cache_response
+from apps.utils.cache_invalidator import CacheInvalidator
 
 from .models import Lesson, LessonContent
 from .serializers import LessonContentSerializer, LessonSerializer
@@ -17,7 +20,52 @@ from apps.courses.models import CourseMentor, EnrollmentCache
 from apps.utils.permission_checker import IsAuthenticated, IsMentor, IsAdmin
 
 
-class LessonListView(generics.ListCreateAPIView):
+class LessonAccessMixin:
+    """Миксин для проверки доступа к урокам"""
+
+    def _check_lesson_access(self, lesson, user_id, user_role):
+        """Проверка доступа к уроку для просмотра"""
+        course = lesson.module.course
+
+        if lesson.is_published and course.status == "published":
+            if (
+                user_id
+                and EnrollmentCache.objects.filter(
+                    user_id=user_id, course=course
+                ).exists()
+            ):
+                return True
+
+        if user_role == "admin":
+            return True
+
+        if user_role == "mentor":
+            is_owner = course.owner_mentor_id == user_id
+            is_mentor = CourseMentor.objects.filter(
+                course=course, mentor_id=user_id
+            ).exists()
+
+            return is_owner or is_mentor
+
+        return False
+
+    def _check_edit_permissions(self, lesson, user_id, user_role):
+        """Проверка прав на редактирование урока"""
+        course = lesson.module.course
+
+        if user_role == "admin":
+            return True
+
+        if user_role != "mentor":
+            raise PermissionDenied("Mentor role required")
+
+        if course.owner_mentor_id != user_id:
+            raise PermissionDenied("You are not the owner of this course")
+
+        return True
+
+
+class LessonListView(generics.ListCreateAPIView, LessonAccessMixin):
     """Список уроков модуля + создание нового"""
 
     serializer_class = LessonSerializer
@@ -44,6 +92,16 @@ class LessonListView(generics.ListCreateAPIView):
             return [IsAuthenticated()]
         return [IsMentor()]
 
+    def list(self, request, *args, **kwargs):
+        """Кэшируем список уроков"""
+        course_slug = kwargs.get("course_slug")
+        module_slug = kwargs.get("module_slug")
+        cache_key_prefix = f"lessons_list_{course_slug}_{module_slug}"
+
+        return cache_response(timeout=300, key_prefix=cache_key_prefix)(super().list)(
+            request, *args, **kwargs
+        )
+
     def get_queryset(self):
         course_slug = self.kwargs.get("course_slug")
         module_slug = self.kwargs.get("module_slug")
@@ -53,33 +111,49 @@ class LessonListView(generics.ListCreateAPIView):
             slug=module_slug,
             course__slug=course_slug,
         )
-        course = module.course
 
         user_id = self.request.user_data.get("id", None)
         user_role = self.request.user_data.get("role", {}).get("name", None)
 
-        if course.status == "published":
-            if (
-                user_id
-                and EnrollmentCache.objects.filter(
-                    user_id=user_id, course=course
+        queryset = Lesson.objects.filter(module=module).select_related("module__course")
+        queryset = queryset.prefetch_related(
+            Prefetch(
+                "content",
+                queryset=LessonContent.objects.order_by("order"),
+                to_attr="content_prefetched",
+            ),
+            Prefetch(
+                "tasks",
+                queryset=Lesson.objects.prefetch_related(
+                    "tasks"
+                ).all(),  # Замените на вашу модель задач
+                to_attr="tasks_prefetched",
+            ),
+        ).order_by("order")
+
+        if self.request.method == "GET":
+            course = module.course
+
+            if course.status == "published":
+                if (
+                    user_id
+                    and EnrollmentCache.objects.filter(
+                        user_id=user_id, course=course
+                    ).exists()
+                ):
+                    return queryset.filter(is_published=True)
+
+            if user_role == "admin":
+                return queryset
+
+            if user_role == "mentor":
+                is_owner = course.owner_mentor_id == user_id
+                is_mentor = CourseMentor.objects.filter(
+                    course=course, mentor_id=user_id
                 ).exists()
-            ):
-                return Lesson.objects.filter(module=module, is_published=True).order_by(
-                    "order"
-                )
 
-        if user_role == "admin":
-            return Lesson.objects.filter(module=module).order_by("order")
-
-        if user_role == "mentor":
-            is_owner = course.owner_mentor_id == user_id
-            is_mentor = CourseMentor.objects.filter(
-                course=course, mentor_id=user_id
-            ).exists()
-
-            if is_owner or is_mentor:
-                return Lesson.objects.filter(module=module).order_by("order")
+                if is_owner or is_mentor:
+                    return queryset
 
         raise PermissionDenied("You don't have access to this course")
 
@@ -98,7 +172,10 @@ class LessonListView(generics.ListCreateAPIView):
         user_role = self.request.user_data.get("role", {}).get("name")
 
         if user_role == "admin":
-            serializer.save(module=module)
+            lesson = serializer.save(module=module)
+            CacheInvalidator.invalidate_lesson_cache(
+                course_slug=course_slug, module_slug=module_slug
+            )
             return
 
         if user_role != "mentor":
@@ -107,10 +184,13 @@ class LessonListView(generics.ListCreateAPIView):
         if course.owner_mentor_id != user_id:
             raise PermissionDenied("You are not the owner of this course")
 
-        serializer.save(module=module)
+        lesson = serializer.save(module=module)
+        CacheInvalidator.invalidate_lesson_cache(
+            course_slug=course_slug, module_slug=module_slug
+        )
 
 
-class LessonDetailView(generics.RetrieveUpdateDestroyAPIView):
+class LessonDetailView(generics.RetrieveUpdateDestroyAPIView, LessonAccessMixin):
     """Детали урока, обновление, удаление"""
 
     serializer_class = LessonSerializer
@@ -125,71 +205,69 @@ class LessonDetailView(generics.RetrieveUpdateDestroyAPIView):
         course_slug = self.kwargs.get("course_slug")
         module_slug = self.kwargs.get("module_slug")
 
-        module = get_object_or_404(
-            Module.objects.select_related("course"),
-            slug=module_slug,
-            course__slug=course_slug,
+        return (
+            Lesson.objects.filter(
+                module__slug=module_slug, module__course__slug=course_slug
+            )
+            .select_related("module__course")
+            .prefetch_related(
+                Prefetch(
+                    "content",
+                    queryset=LessonContent.objects.order_by("order"),
+                    to_attr="content_prefetched",
+                ),
+                Prefetch(
+                    "tasks",
+                    queryset=Lesson.objects.prefetch_related("tasks").all(),
+                    to_attr="tasks_prefetched",
+                ),
+            )
         )
-        return Lesson.objects.filter(module=module)
+
+    def retrieve(self, request, *args, **kwargs):
+        """Кэшируем детали урока"""
+        course_slug = kwargs.get("course_slug")
+        module_slug = kwargs.get("module_slug")
+        lesson_slug = kwargs.get("lesson_slug")
+        cache_key_prefix = f"lesson_detail_{course_slug}_{module_slug}_{lesson_slug}"
+
+        return cache_response(timeout=300, key_prefix=cache_key_prefix)(
+            super().retrieve
+        )(request, *args, **kwargs)
 
     def get_object(self):
-        course_slug = self.kwargs.get("course_slug")
-        module_slug = self.kwargs.get("module_slug")
+        queryset = self.filter_queryset(self.get_queryset())
         lesson_slug = self.kwargs.get("lesson_slug")
 
-        lesson = get_object_or_404(
-            Lesson.objects.select_related("module__course"),
-            slug=lesson_slug,
-            module__slug=module_slug,
-            module__course__slug=course_slug,
-        )
+        lesson = get_object_or_404(queryset, slug=lesson_slug)
+
+        user_id = self.request.user_data.get("id", None)
+        user_role = self.request.user_data.get("role", {}).get("name", None)
 
         if self.request.method == "GET":
-            course = lesson.module.course
-
-            user_id = self.request.user_data.get("id", None)
-            user_role = self.request.user_data.get("role", {}).get("name", None)
-
-            if lesson.is_published and course.status == "published":
-                if (
-                    user_id
-                    and EnrollmentCache.objects.filter(
-                        user_id=user_id, course=course
-                    ).exists()
-                ):
-                    return lesson
-
-            if user_role == "admin":
-                return lesson
-
-            if user_role == "mentor":
-                is_owner = course.owner_mentor_id == user_id
-                is_mentor = CourseMentor.objects.filter(
-                    course=course, mentor_id=user_id
-                ).exists()
-
-                if is_owner or is_mentor:
-                    return lesson
-
-            raise PermissionDenied("You don't have access to this lesson")
-
-        return self.check_edit_permissions(lesson)
-
-    def check_edit_permissions(self, lesson):
-        course = lesson.module.course
-        user_id = self.request.user_data.get("id")
-        user_role = self.request.user_data.get("role", {}).get("name")
-
-        if user_role == "admin":
+            if not self._check_lesson_access(lesson, user_id, user_role):
+                raise PermissionDenied("You don't have access to this lesson")
+            return lesson
+        else:
+            self._check_edit_permissions(lesson, user_id, user_role)
             return lesson
 
-        if user_role != "mentor":
-            raise PermissionDenied("Mentor role required")
+    def perform_update(self, serializer):
+        lesson = serializer.save()
+        CacheInvalidator.invalidate_lesson_cache(
+            course_slug=lesson.module.course.slug,
+            module_slug=lesson.module.slug,
+            lesson_slug=lesson.slug,
+        )
 
-        if course.owner_mentor_id != user_id:
-            raise PermissionDenied("You are not the owner of this course")
-
-        return lesson
+    def perform_destroy(self, instance):
+        course_slug = instance.module.course.slug
+        module_slug = instance.module.slug
+        lesson_slug = instance.slug
+        super().perform_destroy(instance)
+        CacheInvalidator.invalidate_lesson_cache(
+            course_slug=course_slug, module_slug=module_slug, lesson_slug=lesson_slug
+        )
 
 
 class LessonContentListView(generics.ListCreateAPIView):
@@ -220,6 +298,17 @@ class LessonContentListView(generics.ListCreateAPIView):
             return [IsAuthenticated()]
         return [IsMentor()]
 
+    def list(self, request, *args, **kwargs):
+        """Кэшируем контент урока"""
+        course_slug = kwargs.get("course_slug")
+        module_slug = kwargs.get("module_slug")
+        lesson_slug = kwargs.get("lesson_slug")
+        cache_key_prefix = f"lesson_content_{course_slug}_{module_slug}_{lesson_slug}"
+
+        return cache_response(timeout=300, key_prefix=cache_key_prefix)(super().list)(
+            request, *args, **kwargs
+        )
+
     def get_queryset(self):
         course_slug = self.kwargs.get("course_slug")
         module_slug = self.kwargs.get("module_slug")
@@ -232,9 +321,17 @@ class LessonContentListView(generics.ListCreateAPIView):
             module__course__slug=course_slug,
         )
 
-        self.check_lesson_access(lesson)
+        user_id = self.request.user_data.get("id", None)
+        user_role = self.request.user_data.get("role", {}).get("name", None)
 
-        return LessonContent.objects.filter(lesson=lesson).order_by("order")
+        if not self._check_lesson_access(lesson, user_id, user_role):
+            raise PermissionDenied("You don't have access to this lesson content")
+
+        return (
+            LessonContent.objects.filter(lesson=lesson)
+            .select_related("lesson")
+            .order_by("order")
+        )
 
     def perform_create(self, serializer):
         course_slug = self.kwargs.get("course_slug")
@@ -248,55 +345,17 @@ class LessonContentListView(generics.ListCreateAPIView):
             module__course__slug=course_slug,
         )
 
-        self.check_edit_permissions(lesson)
-
-        serializer.save(lesson=lesson)
-
-    def check_lesson_access(self, lesson):
-        """Проверка доступа к уроку"""
-        course = lesson.module.course
-        user_id = self.request.user_data.get("id", None)
-        user_role = self.request.user_data.get("role", {}).get("name", None)
-
-        if lesson.is_published and course.status == "published":
-            if (
-                user_id
-                and EnrollmentCache.objects.filter(
-                    user_id=user_id, course=course
-                ).exists()
-            ):
-                return True
-
-        if user_role == "admin":
-            return True
-
-        if user_role == "mentor":
-            is_owner = course.owner_mentor_id == user_id
-            is_mentor = CourseMentor.objects.filter(
-                course=course, mentor_id=user_id
-            ).exists()
-
-            if is_owner or is_mentor:
-                return True
-
-        raise PermissionDenied("You don't have access to this lesson content")
-
-    def check_edit_permissions(self, lesson):
-        """Проверка прав на редактирование"""
-        course = lesson.module.course
         user_id = self.request.user_data.get("id")
         user_role = self.request.user_data.get("role", {}).get("name")
 
-        if user_role == "admin":
-            return True
+        if not self._check_edit_permissions(lesson, user_id, user_role):
+            raise PermissionDenied("You don't have permission to edit this lesson")
 
-        if user_role != "mentor":
-            raise PermissionDenied("Mentor role required")
+        content = serializer.save(lesson=lesson)
 
-        if course.owner_mentor_id != user_id:
-            raise PermissionDenied("You are not the owner of this course")
-
-        return True
+        CacheInvalidator.invalidate_lesson_cache(
+            course_slug=course_slug, module_slug=module_slug, lesson_slug=lesson_slug
+        )
 
 
 class LessonContentDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -315,71 +374,55 @@ class LessonContentDetailView(generics.RetrieveUpdateDestroyAPIView):
         module_slug = self.kwargs.get("module_slug")
         lesson_slug = self.kwargs.get("lesson_slug")
 
-        lesson = get_object_or_404(
-            Lesson.objects.select_related("module__course"),
-            slug=lesson_slug,
-            module__slug=module_slug,
-            module__course__slug=course_slug,
+        return (
+            LessonContent.objects.filter(
+                lesson__slug=lesson_slug,
+                lesson__module__slug=module_slug,
+                lesson__module__course__slug=course_slug,
+            )
+            .select_related("lesson__module__course")
+            .order_by("order")
         )
-
-        return LessonContent.objects.filter(lesson=lesson)
 
     def get_object(self):
         content = super().get_object()
         lesson = content.lesson
 
-        if self.request.method == "GET":
-            self.check_lesson_access(lesson)
-        else:
-            self.check_edit_permissions(lesson)
-
-        return content
-
-    def check_lesson_access(self, lesson):
-        """Проверка доступа к уроку"""
-        course = lesson.module.course
         user_id = self.request.user_data.get("id", None)
         user_role = self.request.user_data.get("role", {}).get("name", None)
 
-        if lesson.is_published and course.status == "published":
-            if (
-                user_id
-                and EnrollmentCache.objects.filter(
-                    user_id=user_id, course=course
-                ).exists()
-            ):
-                return True
+        if self.request.method == "GET":
+            if not self._check_lesson_access(lesson, user_id, user_role):
+                raise PermissionDenied("You don't have access to this lesson content")
+        else:
+            if not self._check_edit_permissions(lesson, user_id, user_role):
+                raise PermissionDenied("You don't have permission to edit this lesson")
 
-        if user_role == "admin":
-            return True
+        return content
 
-        if user_role == "mentor":
-            is_owner = course.owner_mentor_id == user_id
-            is_mentor = CourseMentor.objects.filter(
-                course=course, mentor_id=user_id
-            ).exists()
+    def perform_update(self, serializer):
+        content = serializer.save()
+        lesson = content.lesson
 
-            if is_owner or is_mentor:
-                return True
+        CacheInvalidator.invalidate_lesson_cache(
+            course_slug=lesson.module.course.slug,
+            module_slug=lesson.module.slug,
+            lesson_slug=lesson.slug,
+        )
 
-        raise PermissionDenied("You don't have access to this lesson content")
+    def perform_destroy(self, instance):
+        lesson = instance.lesson
+        course_slug = lesson.module.course.slug
+        module_slug = lesson.module.slug
+        lesson_slug = lesson.slug
 
-    def check_edit_permissions(self, lesson):
-        """Проверка прав на редактирование"""
-        course = lesson.module.course
-        user_id = self.request.user_data.get("id")
-        user_role = self.request.user_data.get("role", {}).get("name")
+        super().perform_destroy(instance)
 
-        if user_role == "admin":
-            return True
-
-        if user_role != "mentor":
-            raise PermissionDenied("Mentor role required")
-
-        if course.owner_mentor_id != user_id:
-            raise PermissionDenied("You are not the owner of this course")
-
-        return True
+        CacheInvalidator.invalidate_lesson_cache(
+            course_slug=course_slug,
+            module_slug=module_slug,
+            lesson_slug=lesson_slug,
+        )
 
 
 # --------------------------- ADMIN VIEWS ---------------------------
@@ -418,7 +461,14 @@ class AdminLessonListView(generics.ListCreateAPIView):
     def get_queryset(self):
         queryset = (
             Lesson.objects.select_related("module", "module__course")
-            .prefetch_related("content", "tasks")
+            .prefetch_related(
+                Prefetch(
+                    "content",
+                    queryset=LessonContent.objects.order_by("order"),
+                    to_attr="content_prefetched",
+                ),
+                "tasks",
+            )
             .all()
         )
 
@@ -483,6 +533,19 @@ class AdminLessonDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = LessonSerializer
     permission_classes = [IsAdmin]
     lookup_field = "id"
+
+    def get_queryset(self):
+        """Оптимизированный queryset для детального просмотра урока"""
+        return Lesson.objects.select_related(
+            "module__course"
+        ).prefetch_related(
+            Prefetch(
+                'content',
+                queryset=LessonContent.objects.order_by('order'),
+                to_attr='content_prefetched'
+            ),
+            'tasks'
+        ).all()
 
 
 class AdminLessonContentListView(generics.ListCreateAPIView):

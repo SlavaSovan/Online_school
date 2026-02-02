@@ -1,8 +1,11 @@
-from rest_framework import generics, permissions, filters
+from rest_framework import generics, permissions, filters, status
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
+
+from apps.utils.cache_decorator import cache_response
+from apps.utils.cache_invalidator import CacheInvalidator
 
 from .models import Module
 from .serializers import ModuleDetailSerializer
@@ -36,6 +39,15 @@ class ModuleListView(generics.ListCreateAPIView):
         if self.request.method == "GET":
             return [permissions.AllowAny()]
         return [IsMentor()]
+
+    def list(self, request, *args, **kwargs):
+        """Кэшируем список модулей"""
+        course_slug = kwargs.get("course_slug")
+        cache_key_prefix = f"modules_list_{course_slug}"
+
+        return cache_response(timeout=300, key_prefix=cache_key_prefix)(super().list)(
+            request, *args, **kwargs
+        )
 
     def get_queryset(self):
         course_slug = self.kwargs.get("course_slug")
@@ -76,6 +88,7 @@ class ModuleListView(generics.ListCreateAPIView):
 
         if user_role == "admin":
             serializer.save(course=course)
+            CacheInvalidator.invalidate_module_cache(course_slug=course_slug)
             return
 
         if user_role != "mentor":
@@ -84,7 +97,8 @@ class ModuleListView(generics.ListCreateAPIView):
         if course.owner_mentor_id != user_id:
             raise PermissionDenied("You don't have permission to edit this course")
 
-        serializer.save(course=course)
+        module = serializer.save(course=course)
+        CacheInvalidator.invalidate_module_cache(course_slug=course_slug)
 
 
 class ModuleDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -101,47 +115,71 @@ class ModuleDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         course_slug = self.kwargs.get("course_slug")
-        course = get_object_or_404(Course, slug=course_slug)
-        return Module.objects.filter(course=course)
-
-    def get_object(self):
-        course_slug = self.kwargs.get("course_slug")
         module_slug = self.kwargs.get("module_slug")
 
-        module = get_object_or_404(
-            Module.objects.select_related("course"),
-            slug=module_slug,
-            course__slug=course_slug,
+        queryset = (
+            Module.objects.filter(slug=module_slug, course__slug=course_slug)
+            .select_related("course")
+            .prefetch_related(
+                "lessons__content",
+                "lessons__tasks",
+            )
         )
 
+        return queryset
+
+    def retrieve(self, request, *args, **kwargs):
+        """Кэшируем детали модуля"""
+        course_slug = kwargs.get("course_slug")
+        module_slug = kwargs.get("module_slug")
+        cache_key_prefix = f"module_detail_{course_slug}_{module_slug}"
+
+        return cache_response(timeout=300, key_prefix=cache_key_prefix)(
+            super().retrieve
+        )(request, *args, **kwargs)
+
+    def get_object(self):
+        queryset = self.get_queryset()
+
+        if not queryset.exists():
+            raise Response(
+                data={"detail": "Module not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        module = queryset.first()
+
         if self.request.method == "GET":
-            course = module.course
-            user_id = self.request.user_data.get("id", None)
-            user_role = self.request.user_data.get("role", {}).get("name", None)
+            self._check_view_permissions
 
-            if user_role == "admin":
-                return module
-            if user_role == "mentor":
-                if course.owner_mentor_id != user_id:
-                    if not CourseMentor.objects.filter(
-                        course=course, mentor_id=user_id
-                    ).exists():
-                        raise PermissionDenied("You don't have access to this module")
-                return module
+        return self._check_edit_permissions(module)
 
-            if (
-                course.status == "published"
-                and EnrollmentCache.objects.filter(
-                    user_id=user_id, course=course
-                ).exists()
-            ):
-                return module
+    def _check_view_permissions(self, module):
+        """Проверка прав на просмотр модуля"""
+        course = module.course
+        user_id = self.request.user_data.get("id", None)
+        user_role = self.request.user_data.get("role", {}).get("name", None)
 
-            raise PermissionDenied("You don't have access to this module")
+        if user_role == "admin":
+            return module
 
-        return self.check_edit_permissions(module)
+        if user_role == "mentor":
+            if course.owner_mentor_id != user_id:
+                if not CourseMentor.objects.filter(
+                    course=course, mentor_id=user_id
+                ).exists():
+                    raise PermissionDenied("You don't have access to this module")
+            return module
 
-    def check_edit_permissions(self, module):
+        if (
+            course.status == "published"
+            and EnrollmentCache.objects.filter(user_id=user_id, course=course).exists()
+        ):
+            return module
+
+        raise PermissionDenied("You don't have access to this module")
+
+    def _check_edit_permissions(self, module):
         course = module.course
         user_id = self.request.user_data.get("id")
         user_role = self.request.user_data.get("role", {}).get("name")
@@ -156,6 +194,22 @@ class ModuleDetailView(generics.RetrieveUpdateDestroyAPIView):
             raise PermissionDenied("You are not the owner of this course")
 
         return module
+
+    def perform_update(self, serializer):
+        module = serializer.save()
+
+        CacheInvalidator.invalidate_module_cache(
+            course_slug=module.course.slug, module_slug=module.slug
+        )
+
+    def perform_destroy(self, instance):
+        course_slug = instance.course.slug
+        module_slug = instance.slug
+        super().perform_destroy(instance)
+
+        CacheInvalidator.invalidate_module_cache(
+            course_slug=course_slug, module_slug=module_slug
+        )
 
 
 class AdminModuleListView(generics.ListCreateAPIView):
