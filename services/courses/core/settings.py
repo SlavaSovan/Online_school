@@ -15,7 +15,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "")
 DEBUG = True
 
 
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
+ALLOWED_HOSTS = []
 
 
 DJANGO_APPS = [
@@ -85,10 +85,16 @@ TEMPLATES = [
 ]
 
 
-REDIS_HOST = "localhost"
-REDIS_PORT = 6379
-REDIS_DB = 0
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis")
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = os.getenv("REDIS_PORT", "6379")
+REDIS_DB = os.getenv("REDIS_DB", "1")
+REDIS_CACHE_DB = os.getenv("REDIS_CACHE_DB", "2")
 
+REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+REDIS_CACHE_URL = (
+    f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_CACHE_DB}"
+)
 
 REST_FRAMEWORK = {
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
@@ -110,7 +116,7 @@ LOGGING = {
     "handlers": {
         "console": {"class": "logging.StreamHandler"},
     },
-    "root": {"handlers": ["console"], "level": os.getenv("LOG_LEVEL", "INFO")},
+    "root": {"handlers": ["console"], "level": "INFO"},
 }
 
 
@@ -129,7 +135,7 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
 
-USER_SERVICE_URL = "http://localhost:8001"
+USER_SERVICE_URL = os.getenv("USERS_SERVICE_URL", "http://localhost:8001")
 
 
 AWS_ACCESS_KEY_ID = os.getenv("S3_ACCESS_KEY_ID", "")
@@ -171,7 +177,7 @@ DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
+        "LOCATION": REDIS_CACHE_URL,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
             "PARSER_CLASS": "redis.connection.HiredisParser",
@@ -183,7 +189,7 @@ CACHES = {
             "MAX_CONNECTIONS": 1000,
             "PICKLE_VERSION": -1,
         },
-        "KEY_PREFIX": "courses_service",  # Префикс для всех ключей
+        "KEY_PREFIX": "courses_ms",  # Префикс для всех ключей
         "TIMEOUT": 300,  # Дефолтный таймаут
     }
 }

@@ -1,9 +1,10 @@
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jwt import InvalidTokenError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.schemas import LoginSchema
+from app.auth.blacklist import token_blacklist
 from app.core.database import get_db
 from app.core.utils import decode_jwt, validate_password
 from app.users.models import User
@@ -17,7 +18,9 @@ from .utils import (
 
 
 http_bearer = HTTPBearer(auto_error=False)
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl="/api/v1/auth/login/swagger", auto_error=False
+)
 
 
 async def validate_auth_user(
@@ -29,7 +32,7 @@ async def validate_auth_user(
         detail="Invalid login or password",
     )
     user_repo = UserRepository(db)
-    user = await user_repo.get_by_identifier(login_data.identifier)
+    user = await user_repo.get_by_email(login_data.email)
 
     if not user:
         raise unauthed_exc
@@ -98,6 +101,19 @@ async def get_user_by_token_sub(
         )
 
 
+async def check_token_blacklist(token: str = Depends(oauth2_scheme)):
+    if not token:
+        return token
+
+    if await token_blacklist.is_blacklisted(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return token
+
+
 class UserGetterFromToken:
     def __init__(self, token_type: str):
         self.token_type = token_type
@@ -105,9 +121,11 @@ class UserGetterFromToken:
     async def __call__(
         self,
         payload: dict = Depends(get_current_token_payload),
+        token: str = Depends(oauth2_scheme),
         db: AsyncSession = Depends(get_db),
     ):
         validate_token_type(payload, self.token_type)
+        await check_token_blacklist(token)
         return await get_user_by_token_sub(payload, db)
 
 

@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 
 class TokenInfo(BaseModel):
@@ -9,7 +9,7 @@ class TokenInfo(BaseModel):
 
 
 class LoginSchema(BaseModel):
-    identifier: str
+    email: EmailStr
     password: str
 
 

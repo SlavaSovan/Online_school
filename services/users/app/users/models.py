@@ -52,10 +52,10 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    username: Mapped[Optional[str]] = mapped_column(String(50), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
     first_name: Mapped[Optional[str]] = mapped_column(String(50))
     last_name: Mapped[Optional[str]] = mapped_column(String(50))
+    patronymic: Mapped[Optional[str]] = mapped_column(String(50))
     is_active: Mapped[bool] = mapped_column(default=True)
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"))
     created_at: Mapped[datetime] = mapped_column(

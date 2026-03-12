@@ -57,7 +57,6 @@ class CacheInvalidator:
     @staticmethod
     def invalidate_module_cache(course_slug=None, module_slug=None):
         """Инвалидирует кэш, связанный с модулями"""
-        from django.core.cache import cache
 
         patterns = [
             "modules_list_*",

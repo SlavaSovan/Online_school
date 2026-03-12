@@ -1,0 +1,79 @@
+version: '3.8'
+
+
+services:
+  pg:
+    image: postgres:17
+    container_name: auth_postgres
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      pg:
+        condition: service_healthy
+    restart: unless-stopped
+  
+  redis:
+    image: redis:8
+    container_name: auth_redis
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: auth_service
+    environment:
+      DATABASE__DB_HOST: pg
+      DATABASE__DB_PORT: 5432
+      DATABASE__DB_NAME: ${DB_NAME}
+      DATABASE__DB_USER: ${DB_USER}
+      DATABASE__DB_PASSWORD: ${DB_PASSWORD}
+      REDIS__REDIS_HOST: redis
+      REDIS__REDIS_PORT: 6379
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./certs:/app/certs
+      - ./alembic:/app/alembic
+    depends_on:
+      pg:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./
+          target: /app
+
+volumes:
+  pg_data:
+  redis_data:
+  pgadmin_data:

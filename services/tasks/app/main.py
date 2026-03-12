@@ -1,30 +1,48 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
+from app.core.database import close_db, init_db
 
-# from app.auth.routes import router as auth_router
+from app.admin.routes import admin_router
+from app.tasks.routes import router as tasks_router
+from app.questions.routes import router as questions_router
+from app.submissions.routes import router as submissions_router
+from app.sandbox.routes import router as sandbox_router
+from app.reviews.routes import router as reviews_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup:
+    init_db()
+    yield
+    # Shutdown
+    await close_db()
 
 
 app = FastAPI(
     title=settings.APP_NAME,
     debug=settings.DEBUG,
     docs_url=settings.API_PREFIX,
+    lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=settings.CORS_ORIGINS,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
-
-# app.include_router(auth_router)
+app.include_router(admin_router)
+app.include_router(tasks_router)
+app.include_router(questions_router)
+app.include_router(submissions_router)
+app.include_router(sandbox_router)
+app.include_router(reviews_router)
 
 
 @app.get("/health")

@@ -1,10 +1,6 @@
-"""
-Интерактивное создание администратора.
-Запускать после init_roles.py.
-"""
-
 import asyncio
 import getpass
+import logging
 import re
 import sys
 from pathlib import Path
@@ -12,12 +8,20 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.core.database import AsyncSessionLocal
-from app.core.utils import hash_password
+import app.core.database as db
 from app.users.models import Role, User
-from app.users.schemas import UserCreate, UserDetailResponse
+from app.users.schemas import UserCreate
 from app.users.repository import RoleRepository, UserRepository
 from app.users.services import UserService
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+
+logger = logging.getLogger(__name__)
 
 
 def validate_email(email: str) -> bool:
@@ -46,8 +50,7 @@ async def get_admin_role(db) -> Optional[Role]:
     admin_role = await role_repo.get_by_name("admin")
 
     if not admin_role:
-        print("\n❌ Admin role not found!")
-        print("Please run 'python -m app.scripts.init_roles' first")
+        logger.error("Admin role no found!")
         return None
 
     return admin_role
@@ -58,7 +61,7 @@ async def check_existing_admin(db, email: str) -> Optional[User]:
     existing_user = await user_repo.get_by_email(email)
 
     if existing_user:
-        print(f"\n⚠️  User with email '{email}' already exists!")
+        logger.warning(f"User with email '{email}' already exists!")
         return existing_user
 
     return None
@@ -67,9 +70,9 @@ async def check_existing_admin(db, email: str) -> Optional[User]:
 async def create_admin_user(
     db,
     email: str,
-    username: str,
     first_name: str,
     last_name: str,
+    patronymic: str,
     password: str,
     admin_role,
 ):
@@ -78,9 +81,9 @@ async def create_admin_user(
 
     user_data = UserCreate(
         email=email,
-        username=username,
         first_name=first_name,
         last_name=last_name,
+        patronymic=patronymic,
         password=password,
         password_confirm=password,
         role_id=admin_role.id,
@@ -92,38 +95,39 @@ async def create_admin_user(
 
 
 def get_user_input():
-    print("\n" + "=" * 60)
-    print("ADMIN USER CREATION")
-    print("=" * 60)
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("ADMIN USER CREATION")
+    logger.info("=" * 60)
 
     while True:
         email: str = input("\nEmail: ").strip()
         if validate_email(email):
             break
-        print("❌ Invalid email format. Please try again.")
+        logger.error("Invalid email format. Please try again.")
 
     while True:
         password: str = getpass.getpass("Password: ")
         confirm_password: str = getpass.getpass("Confirm password: ")
 
         if password != confirm_password:
-            print("❌ Passwords don't match. Please try again.")
+            logger.error("Passwords don't match. Please try again.")
             continue
 
         is_valid, message = validate_password(password)
         if is_valid:
             break
-        print(f"❌ {message}. Please try again.")
+        logger.error(f"{message}. Please try again.")
 
-    username: str = input("Username (optional, press Enter to skip): ").strip()
     first_name: str = input("First name (optional): ").strip()
     last_name: str = input("Last name (optional): ").strip()
+    patronymic: str = input("Patronymic (optional): ").strip()
 
     return {
         "email": email,
-        "username": username or None,
         "first_name": first_name or None,
         "last_name": last_name or None,
+        "patronymic": patronymic or None,
         "password": password,
     }
 
@@ -131,7 +135,9 @@ def get_user_input():
 async def main():
     print("Setting up administrator account...")
 
-    async with AsyncSessionLocal() as session:
+    db.init_db()
+
+    async with db.async_session_maker() as session:
         try:
             admin_role: Optional[Role] = await get_admin_role(session)
             if not admin_role:
@@ -141,9 +147,9 @@ async def main():
 
             existing_user = await check_existing_admin(session, user_data["email"])
             if existing_user:
-                print(f"\nExisting user found:")
-                print(f"    Email: {existing_user.email}")
-                print(f"    Role: {existing_user.role.name}")
+                logger.warning(f"Existing user found:")
+                logger.info(f"    Email: {existing_user.email}")
+                logger.info(f"    Role: {existing_user.role.name}")
 
                 update = (
                     input("\nUpdate this user to admin role? (y/n): ").strip().lower()
@@ -151,31 +157,32 @@ async def main():
                 if update == "y":
                     existing_user.role_id = admin_role.id
                     await session.commit()
-                    print("\n✅ User updated to admin role!")
+                    logger.info("User updated to admin role!")
                 else:
-                    print("\n❌ Operation cancelled.")
+                    logger.errior("Operation cancelled.")
                 return
 
-            print("\n" + "=" * 60)
-            print("CONFIRM ADMIN CREATION")
-            print("=" * 60)
-            print(f"Email: {user_data['email']}")
-            print(f"Username: {user_data['username']}")
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("CONFIRM ADMIN CREATION")
+            logger.info("=" * 60)
+            logger.info("")
+            logger.info(f"Email: {user_data['email']}")
             if user_data["first_name"]:
-                print(f"First name: {user_data['first_name']}")
+                logger.info(f"First name: {user_data['first_name']}")
             if user_data["last_name"]:
-                print(f"Last name: {user_data['last_name']}")
+                logger.info(f"Last name: {user_data['last_name']}")
+            if user_data["patronymic"]:
+                logger.info(f"Last name: {user_data['last_name']}")
 
             confirm = (
-                input("\n❓ Create admin user with these details? (y/n): ")
-                .strip()
-                .lower()
+                input("\nCreate admin user with these details? (y/n): ").strip().lower()
             )
             if confirm != "y":
-                print("\n❌ Operation cancelled.")
+                logger.error("Operation cancelled.")
                 return
 
-            print("\nCreating admin user...")
+            logger.info("Creating admin user...")
             admin_user = await create_admin_user(
                 session, **user_data, admin_role=admin_role
             )
@@ -185,25 +192,27 @@ async def main():
 
             await session.commit()
 
-            print("\n" + "=" * 60)
-            print("✅ ADMIN USER CREATED SUCCESSFULLY!")
-            print("=" * 60)
-            print(f"\nAdministrator credentials:")
-            print(f"    Email: {admin_detail.email}")
-            print(f"    Username: {admin_detail.username}")
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("ADMIN USER CREATED SUCCESSFULLY!")
+            logger.info("=" * 60)
+            logger.info("")
+            logger.info(f"Administrator credentials:")
+            logger.info(f"    Email: {admin_detail.email}")
             if admin_detail.first_name:
-                print(
-                    f"    Name: {admin_detail.first_name} {admin_detail.last_name or ''}"
+                logger.info(
+                    f"    Name: {admin_detail.first_name or ''} {admin_detail.last_name or ''} {admin_detail.patronymic or ''}"
                 )
-            print(f"    Role: {admin_detail.role.name}")
-            print(f"    User ID: {admin_detail.id}")
+            logger.info(f"    Role: {admin_detail.role.name}")
+            logger.info(f"    User ID: {admin_detail.id}")
 
-            print("\nIMPORTANT: Save these credentials securely!")
-            print("You will need them to login and manage the system.")
+            logger.info("")
+            logger.info("IMPORTANT: Save these credentials securely!")
+            logger.info("You will need them to login and manage the system.")
 
         except Exception as e:
             await session.rollback()
-            print(f"\n❌ Failed to create admin user: {e}")
+            logger.error(f"Failed to create admin user: {e}")
             sys.exit(1)
 
 

@@ -2,20 +2,23 @@ from enum import Enum
 
 
 class TaskType(str, Enum):
-    SINGLE_CHOICE = "single_choice"
-    MULTIPLE_CHOICE = "multiple_choice"
-    TEXT = "text"
-    SHORT_ANSWER = "short_answer"
+    TEST = "test"
     FILE_UPLOAD = "file_upload"
-    CODE = "code"
+    SANDBOX = "sandbox"
+
+
+class QuestionType(str, Enum):
+    SINGLE_CHOIE = "single_choice"
+    MULTIPLE_CHOICE = "multiple_choice"
+    SHORT_ANSWER = "short_answer"
 
 
 class SubmissionStatus(str, Enum):
-    PENDING = "pending"
-    AUTO_CHECKED = "auto_checked"
+    QUEUED = "queued"
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
     NEEDS_REVIEW = "needs_review"
-    APPROVED = "approved"
-    REJECTED = "rejected"
 
 
 class CodeLanguage(str, Enum):

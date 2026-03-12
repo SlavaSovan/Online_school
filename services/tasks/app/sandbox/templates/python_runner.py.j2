@@ -1,0 +1,66 @@
+import json
+import traceback
+import sys
+
+{{ user_code }}
+
+def run_tests():
+    results = []
+    passed = 0
+    failed = 0
+
+    fn = globals().get("{{ function_name }}")
+
+    if not fn:
+        raise Exception("Function '{{ function_name }}' not found")
+    
+    tests_data = {json.dumps(tests.get('tests', []))}
+
+    for idx, test in enumerate(tests_data):
+        try:
+            result = fn(*test["input"])
+            success = result == test["expected"]
+            if success:
+                passed += 1
+            else:
+                failed += 1
+
+            results.append({
+                "index": idx,
+                "success": success,
+                "input": test["input"],
+                "expected": test["expected"],
+                "result": result,
+            })
+        except Exception as e:
+            failed += 1
+            results.append({
+                "index": idx,
+                "success": False,
+                "input": test["input"],
+                "expected": test["expected"],
+                "error": traceback.format_exc(),
+            })
+
+    return {
+        "success": failed == 0,
+        "passed": passed,
+        "failed": failed,
+        "results": results,
+    }
+
+
+if __name__ == "__main__":
+    try:
+        result = run_tests()
+        print(json.dumps(result))
+        sys.exit(0)
+    except Exception:
+        print(json.dumps({
+            "success": False,
+            "passed": 0,
+            "failed": {len(tests.get("tests", []))},
+            "results": [],
+            "error": traceback.format_exc(),
+        }))
+        sys.exit(0)

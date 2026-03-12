@@ -72,25 +72,32 @@ class RoleDetailResponse(RoleResponse):
 class RoleUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=3, max_length=50)
     description: Optional[str] = None
-    is_default: Optional[bool] = None
     permission_ids: Optional[List[int]] = None
 
 
 class UserBase(BaseModel):
     email: EmailStr
-    username: Optional[str] = Field(None, max_length=50)
     first_name: Optional[str] = Field(None, max_length=50)
     last_name: Optional[str] = Field(None, max_length=50)
-    role_id: Optional[int] = None
+    patronymic: Optional[str] = Field(None, max_length=50)
 
 
-class UserCreate(UserBase):
+class UserRegister(UserBase):
     password: str = Field(..., min_length=6, max_length=100)
     password_confirm: str = Field(..., min_length=6, max_length=100)
 
 
-class UserUpdate(UserBase):
+class UserCreate(UserRegister):
+    role_id: Optional[int] = None
+    password: str = Field(..., min_length=6, max_length=100)
+    password_confirm: str = Field(..., min_length=6, max_length=100)
+
+
+class UserUpdateProfile(UserBase):
     email: Optional[EmailStr] = None
+
+
+class UserUpdate(UserUpdateProfile):
     is_active: Optional[bool] = None
     role_id: Optional[int] = None
 
@@ -102,9 +109,9 @@ class ChangeRoleRequest(BaseModel):
 class UserResponse(BaseModel):
     id: int
     email: EmailStr
-    username: Optional[str]
     first_name: Optional[str]
     last_name: Optional[str]
+    patronymic: Optional[str]
     is_active: bool
     role_id: int
     created_at: datetime

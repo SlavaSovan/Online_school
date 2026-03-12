@@ -1,4 +1,5 @@
-from sqlalchemy import String, Integer, ForeignKey
+from uuid import UUID
+from sqlalchemy import JSON, String, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -9,15 +10,27 @@ class CodeTask(Base):
     __tablename__ = "code_tasks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    task_id: Mapped[int] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), unique=True
+    task_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), unique=True, index=True
     )
 
     language: Mapped[CodeLanguage] = mapped_column(String(20))
     template_code: Mapped[str] = mapped_column(String)
     tests_definition: Mapped[str] = mapped_column(String)
 
-    time_limit: Mapped[int] = mapped_column(default=2)      # seconds
+    time_limit: Mapped[int] = mapped_column(default=2)  # seconds
     memory_limit: Mapped[int] = mapped_column(default=256)  # MB
 
     task = relationship("Task", back_populates="code_task")
+
+
+class SandboxExecution(Base):
+    __tablename__ = "sandbox_executions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    submission_id: Mapped[int] = mapped_column(
+        ForeignKey("submissions.id", ondelete="CASCADE"),
+        index=True,
+        unique=True,
+    )
+    result: Mapped[dict] = mapped_column(JSON)

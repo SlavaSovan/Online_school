@@ -12,7 +12,7 @@ class Review(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
 
     submission_id: Mapped[int] = mapped_column(
-        ForeignKey("submissions.id", ondelete="CASCADE"), unique=True
+        ForeignKey("submissions.id", ondelete="CASCADE"), unique=True, index=True
     )
 
     mentor_id: Mapped[int] = mapped_column(index=True)
@@ -20,7 +20,18 @@ class Review(Base):
     score: Mapped[int] = mapped_column(Integer)
 
     reviewed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now()
+        DateTime(timezone=True), default=func.now(), index=True
     )
 
     submission = relationship("Submission", back_populates="review")
+
+    def to_dict(self) -> dict:
+        """Конвертация объекта в словарь"""
+        return {
+            "id": self.id,
+            "submission_id": self.submission_id,
+            "mentor_id": self.mentor_id,
+            "score": self.score,
+            "comment": self.comment,
+            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+        }

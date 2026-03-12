@@ -1,0 +1,111 @@
+from fastapi import APIRouter, Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID
+
+from app.core.database import get_db
+from app.tasks.schemas import (
+    TaskCreateSchema,
+    TaskUpdateSchema,
+    TaskResponseSchema,
+)
+from app.tasks.services import TaskService
+
+from app.utils.cache_decorator import invalidate_cache
+from app.utils.permission_checker import (
+    IsAuthenticated,
+    IsMentor,
+)
+
+from app.utils.course_dependencies import (
+    CheckMentorIsOwner,
+    GetCourseInfoByLessonId,
+    CheckUserEnrolledInCourse,
+    GetLessonDetail,
+)
+
+
+router = APIRouter(prefix="", tags=["Tasks"])
+
+
+@router.get(
+    "/tasks/{task_id}/",
+    response_model=TaskResponseSchema,
+    dependencies=[Depends(IsAuthenticated())],
+)
+async def get_task(
+    task_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    task = await TaskService.get_by_id(db, task_id)
+
+    course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
+    await CheckUserEnrolledInCourse(course_slug=course_info["course_slug"])(request)
+    return task
+
+
+@router.post(
+    "/courses/{course_slug}/modules/{module_slug}/lessons/{lesson_slug}/tasks/",
+    response_model=TaskResponseSchema,
+    dependencies=[Depends(IsMentor())],
+)
+@invalidate_cache(keys=["task:*"])
+async def create_task(
+    payload: TaskCreateSchema,
+    request: Request,
+    course_slug: str,
+    module_slug: str,
+    lesson_slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await CheckMentorIsOwner(course_slug=course_slug)(request)
+    lesson_detail = await GetLessonDetail(course_slug, module_slug, lesson_slug)(
+        request
+    )
+
+    return await TaskService.create(db, payload, lesson_detail["id"])
+
+
+@router.patch(
+    "/tasks/{task_id}/",
+    response_model=TaskResponseSchema,
+    dependencies=[Depends(IsMentor())],
+)
+@invalidate_cache(
+    keys=["task:{task_id}", "questions:task:{task_id}*", "submissions:task:{task_id}*"]
+)
+async def update_task(
+    task_id: UUID,
+    payload: TaskUpdateSchema,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    task = await TaskService.get_by_id(db, task_id)
+    course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
+    await CheckMentorIsOwner(course_slug=course_info["course_slug"])(request)
+
+    data = payload.model_dump(exclude_unset=True)
+
+    return await TaskService.update(db, task, data)
+
+
+@router.delete(
+    "/tasks/{task_id}/",
+    dependencies=[Depends(IsMentor())],
+)
+@invalidate_cache(
+    keys=["task:{task_id}", "questions:task:{task_id}*", "submissions:task:{task_id}*"],
+    before_call=True,
+)
+async def delete_task(
+    task_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    task = await TaskService.get_by_id(db, task_id)
+    course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
+    await CheckMentorIsOwner(course_slug=course_info["course_slug"])(request)
+
+    await TaskService.delete(db, task)
+
+    return {"status": "deleted"}
