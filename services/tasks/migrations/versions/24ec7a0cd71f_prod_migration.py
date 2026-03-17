@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "24ec7a0cd71f"
-down_revision: Union[str, Sequence[str], None] = "65e3dc2214b8"
+down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -45,9 +45,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        op.f("ix_tasks_lesson_id"), "tasks", ["lesson_id"], unique=False
-    )
+    op.create_index(op.f("ix_tasks_lesson_id"), "tasks", ["lesson_id"], unique=False)
     op.create_table(
         "code_tasks",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -83,9 +81,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["task_id"], ["tasks.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        op.f("ix_questions_order"), "questions", ["order"], unique=False
-    )
+    op.create_index(op.f("ix_questions_order"), "questions", ["order"], unique=False)
     op.create_index(
         op.f("ix_questions_task_id"), "questions", ["task_id"], unique=False
     )
@@ -149,9 +145,7 @@ def upgrade() -> None:
         sa.Column("question_id", sa.Integer(), nullable=False),
         sa.Column("text", sa.String(), nullable=False),
         sa.Column("is_correct", sa.Boolean(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["question_id"], ["questions.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["question_id"], ["questions.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -219,9 +213,7 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_reviews_reviewed_at"), table_name="reviews")
     op.drop_index(op.f("ix_reviews_mentor_id"), table_name="reviews")
     op.drop_table("reviews")
-    op.drop_index(
-        op.f("ix_answer_options_question_id"), table_name="answer_options"
-    )
+    op.drop_index(op.f("ix_answer_options_question_id"), table_name="answer_options")
     op.drop_table("answer_options")
     op.drop_index(op.f("ix_submissions_user_id"), table_name="submissions")
     op.drop_index(op.f("ix_submissions_task_id"), table_name="submissions")

@@ -1,7 +1,7 @@
 FROM python:3.13.12-slim
 
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
@@ -18,15 +18,11 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Создаем безопасного пользователя
-RUN useradd -m -u 1000 appuser
-USER appuser
-
 COPY . .
 
 RUN chmod +x prestart.sh
 
-EXPOSE 8003
+EXPOSE 8000
 
 ENTRYPOINT [ "./prestart.sh" ]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8003", "--reload"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

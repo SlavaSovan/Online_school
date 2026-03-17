@@ -13,7 +13,18 @@ if [ ! -f /app/certs/jwt-private.pem ]; then
 fi
 
 echo "Applying migrations..."
+
+echo "Waiting for postgres..."
+
+while ! pg_isready -h $DATABASE__DB_HOST -p $DATABASE__DB_PORT
+do
+  sleep 1
+done
+
+echo "Postgres ready"
+
 alembic upgrade head
+
 echo "Migrations applied!"
 
 echo "Initialization completed"

@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     model_config = ConfigDict(
         env_nested_delimiter="__",
         extra="ignore",
-        env_file=".env",
+        # env_file=".env",
     )
 
 

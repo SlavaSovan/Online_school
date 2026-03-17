@@ -15,7 +15,15 @@ SECRET_KEY = os.getenv("SECRET_KEY", "")
 DEBUG = True
 
 
-ALLOWED_HOSTS = []
+def get_allowed_hosts():
+    """Получение списка разрешенных хостов из переменной окружения"""
+    hosts = os.getenv("DJANGO_ALLOWED_HOSTS", "")
+    if hosts:
+        return [h.strip() for h in hosts.split(",") if h.strip()]
+    return ["localhost", "127.0.0.1"]
+
+
+ALLOWED_HOSTS = get_allowed_hosts()
 
 
 DJANGO_APPS = [
@@ -85,16 +93,13 @@ TEMPLATES = [
 ]
 
 
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = os.getenv("REDIS_PORT", "6379")
-REDIS_DB = os.getenv("REDIS_DB", "1")
-REDIS_CACHE_DB = os.getenv("REDIS_CACHE_DB", "2")
+REDIS_PORT = os.getenv("REDIS_PORT", 6379)
+REDIS_DB = os.getenv("REDIS_DB", 1)
+REDIS_CACHE_DB = os.getenv("REDIS_CACHE_DB", 2)
 
-REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
-REDIS_CACHE_URL = (
-    f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_CACHE_DB}"
-)
+REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+REDIS_CACHE_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_CACHE_DB}"
 
 REST_FRAMEWORK = {
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
@@ -129,10 +134,6 @@ LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
-
-
-MEDIA_URL = "/media/"
-MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
 
 USER_SERVICE_URL = os.getenv("USERS_SERVICE_URL", "http://localhost:8001")
@@ -180,7 +181,6 @@ CACHES = {
         "LOCATION": REDIS_CACHE_URL,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            "PARSER_CLASS": "redis.connection.HiredisParser",
             "CONNECTION_POOL_CLASS": "redis.BlockingConnectionPool",
             "CONNECTION_POOL_CLASS_KWARGS": {
                 "max_connections": 50,
