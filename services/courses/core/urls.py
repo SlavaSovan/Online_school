@@ -13,17 +13,17 @@ def health_check(request):
 
 
 urlpatterns = [
-    path("health/", health_check, name="health_check"),
-    path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("health", health_check, name="health_check"),
+    path("api/v1/schema", SpectacularAPIView.as_view(), name="schema"),
     path(
-        "api/v1/",
+        "api/v1",
         SpectacularSwaggerView.as_view(url_name="schema"),
         name="swagger-ui",
     ),
     path("", include("apps.courses.urls")),
-    path("courses/<slug:course_slug>/modules/", include("apps.modules.urls")),
+    path("courses/<slug:course_slug>/", include("apps.modules.urls")),
     path(
-        "courses/<slug:course_slug>/modules/<slug:module_slug>/lessons/",
+        "courses/<slug:course_slug>/modules/<slug:module_slug>/",
         include("apps.lessons.urls"),
     ),
     path("admin/", include("apps.admin.urls")),

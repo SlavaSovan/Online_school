@@ -4,12 +4,7 @@ from typing import Dict, Optional, Any
 from datetime import datetime
 
 from app.submissions.models import Submission
-from app.submissions.schemas_payload import SubmissionPayload
 from app.utils.enums import SubmissionStatus, TaskType
-
-
-class SubmissionCreateSchema(BaseModel):
-    payload: SubmissionPayload
 
 
 class SubmissionResponseSchema(BaseModel):
@@ -21,7 +16,6 @@ class SubmissionResponseSchema(BaseModel):
     status: SubmissionStatus
 
     score: Optional[int] = None
-    max_score: Optional[int] = None
     feedback: Optional[Dict[str, Any]]
 
     has_file: bool = False
@@ -53,7 +47,6 @@ class SubmissionResponseSchema(BaseModel):
             attempt=submission.attempt,
             status=submission.status,
             score=submission.score,
-            max_score=submission.max_score,
             feedback=submission.feedback,
             has_file=has_file,
             file_info=file_info,
@@ -84,6 +77,7 @@ class FileDownloadResponse(BaseModel):
 class SubmissionTaskStateSchema(BaseModel):
     task_type: TaskType
     max_attempts: int
+    max_score: int
     attempts_used: int
     can_submit: bool
     last_submission: Optional[SubmissionResponseSchema]

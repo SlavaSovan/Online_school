@@ -146,9 +146,9 @@ class CourseDetailPrivateView(generics.RetrieveAPIView):
 
     def retrieve(self, request, *args, **kwargs):
         cache_key_prefix = f"course_detail_private_{kwargs.get('slug')}"
-        return cache_response(
-            timeout=180, key_prefix=cache_key_prefix, vary_on_user=True
-        )(super().retrieve)(request, *args, **kwargs)
+        return cache_response(timeout=180, key_prefix=cache_key_prefix)(
+            super().retrieve
+        )(request, *args, **kwargs)
 
     def get_queryset(self):
         return (
@@ -352,9 +352,9 @@ class MyEnrollmentsView(generics.ListAPIView):
         user_id = self.request.user_data.get("id")
         cache_key_prefix = f"my_enrollments_user_{user_id}"
 
-        return cache_response(timeout=180, key_prefix=cache_key_prefix)(super().list)(
-            request, *args, **kwargs
-        )
+        decorator = cache_response(timeout=180, key_prefix=cache_key_prefix)
+        decorated_method = decorator(super().list)
+        return decorated_method(self, request, *args, **kwargs)
 
     def get_queryset(self):
         user_id = self.request.user_data.get("id")
@@ -375,9 +375,11 @@ class MyCoursesView(generics.ListAPIView):
         user_id = self.request.user_data.get("id")
         cache_key_prefix = f"my_courses_user_{user_id}"
 
-        return cache_response(timeout=180, key_prefix=cache_key_prefix)(super().list)(
-            request, *args, **kwargs
-        )
+        decorator = cache_response(timeout=180, key_prefix=cache_key_prefix)
+        # Применяем декоратор к super().list
+        decorated_method = decorator(super().list)
+        # Вызываем декорированный метод
+        return decorated_method(self, request, *args, **kwargs)
 
     def get_queryset(self):
         mentor_id = self.request.user_data.get("id")
@@ -408,8 +410,15 @@ class AdminCourseManagementView(generics.ListCreateAPIView):
 
     def get_serializer(self, *args, **kwargs):
         serializer = super().get_serializer(*args, **kwargs)
-        serializer.fields["owner_mentor_id"].read_only = False
-        serializer.fields["owner_mentor_id"].required = True
+
+        if hasattr(serializer, "child"):  # Это ListSerializer
+            # Изменяем поле у child serializer
+            serializer.child.fields["owner_mentor_id"].read_only = False
+            serializer.child.fields["owner_mentor_id"].required = True
+        else:  # Это обычный serializer
+            serializer.fields["owner_mentor_id"].read_only = False
+            serializer.fields["owner_mentor_id"].required = True
+
         return serializer
 
     def get_queryset(self):

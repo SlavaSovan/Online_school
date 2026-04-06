@@ -1,3 +1,4 @@
+from pathlib import Path
 from rest_framework import generics, filters
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
@@ -13,8 +14,12 @@ from apps.lessons.filters import (
 from apps.utils.cache_decorator import cache_response
 from apps.utils.cache_invalidator import CacheInvalidator
 
-from .models import Lesson, LessonContent
-from .serializers import LessonContentSerializer, LessonSerializer
+from .models import Lesson, LessonContent, LessonTask
+from .serializers import (
+    LessonContentDisplaySerializer,
+    LessonContentSerializer,
+    LessonSerializer,
+)
 from apps.modules.models import Module
 from apps.courses.models import CourseMentor, EnrollmentCache
 from apps.utils.permission_checker import IsAuthenticated, IsMentor, IsAdmin
@@ -98,9 +103,9 @@ class LessonListView(generics.ListCreateAPIView, LessonAccessMixin):
         module_slug = kwargs.get("module_slug")
         cache_key_prefix = f"lessons_list_{course_slug}_{module_slug}"
 
-        return cache_response(timeout=300, key_prefix=cache_key_prefix)(super().list)(
-            request, *args, **kwargs
-        )
+        decorator = cache_response(timeout=180, key_prefix=cache_key_prefix)
+        decorated_method = decorator(super().list)
+        return decorated_method(self, request, *args, **kwargs)
 
     def get_queryset(self):
         course_slug = self.kwargs.get("course_slug")
@@ -124,9 +129,7 @@ class LessonListView(generics.ListCreateAPIView, LessonAccessMixin):
             ),
             Prefetch(
                 "tasks",
-                queryset=Lesson.objects.prefetch_related(
-                    "tasks"
-                ).all(),  # Замените на вашу модель задач
+                queryset=LessonTask.objects.all(),
                 to_attr="tasks_prefetched",
             ),
         ).order_by("order")
@@ -218,7 +221,7 @@ class LessonDetailView(generics.RetrieveUpdateDestroyAPIView, LessonAccessMixin)
                 ),
                 Prefetch(
                     "tasks",
-                    queryset=Lesson.objects.prefetch_related("tasks").all(),
+                    queryset=LessonTask.objects.all(),
                     to_attr="tasks_prefetched",
                 ),
             )
@@ -231,9 +234,9 @@ class LessonDetailView(generics.RetrieveUpdateDestroyAPIView, LessonAccessMixin)
         lesson_slug = kwargs.get("lesson_slug")
         cache_key_prefix = f"lesson_detail_{course_slug}_{module_slug}_{lesson_slug}"
 
-        return cache_response(timeout=300, key_prefix=cache_key_prefix)(
-            super().retrieve
-        )(request, *args, **kwargs)
+        decorator = cache_response(timeout=300, key_prefix=cache_key_prefix)
+        decorated_method = decorator(super().retrieve)
+        return decorated_method(self, request, *args, **kwargs)
 
     def get_object(self):
         queryset = self.filter_queryset(self.get_queryset())
@@ -270,7 +273,7 @@ class LessonDetailView(generics.RetrieveUpdateDestroyAPIView, LessonAccessMixin)
         )
 
 
-class LessonContentListView(generics.ListCreateAPIView):
+class LessonContentListView(generics.ListCreateAPIView, LessonAccessMixin):
     """Список контента урока + создание нового"""
 
     serializer_class = LessonContentSerializer
@@ -305,9 +308,9 @@ class LessonContentListView(generics.ListCreateAPIView):
         lesson_slug = kwargs.get("lesson_slug")
         cache_key_prefix = f"lesson_content_{course_slug}_{module_slug}_{lesson_slug}"
 
-        return cache_response(timeout=300, key_prefix=cache_key_prefix)(super().list)(
-            request, *args, **kwargs
-        )
+        decorator = cache_response(timeout=300, key_prefix=cache_key_prefix)
+        decorated_method = decorator(super().list)
+        return decorated_method(self, request, *args, **kwargs)
 
     def get_queryset(self):
         course_slug = self.kwargs.get("course_slug")
@@ -358,15 +361,13 @@ class LessonContentListView(generics.ListCreateAPIView):
         )
 
 
-class LessonContentDetailView(generics.RetrieveUpdateDestroyAPIView):
+class LessonContentDetailView(generics.RetrieveUpdateDestroyAPIView, LessonAccessMixin):
     """Детали контента, обновление, удаление"""
 
     serializer_class = LessonContentSerializer
     lookup_field = "id"
 
     def get_permissions(self):
-        if self.request.method == "GET":
-            return [IsAuthenticated()]
         return [IsMentor()]
 
     def get_queryset(self):
@@ -391,12 +392,8 @@ class LessonContentDetailView(generics.RetrieveUpdateDestroyAPIView):
         user_id = self.request.user_data.get("id", None)
         user_role = self.request.user_data.get("role", {}).get("name", None)
 
-        if self.request.method == "GET":
-            if not self._check_lesson_access(lesson, user_id, user_role):
-                raise PermissionDenied("You don't have access to this lesson content")
-        else:
-            if not self._check_edit_permissions(lesson, user_id, user_role):
-                raise PermissionDenied("You don't have permission to edit this lesson")
+        if not self._check_edit_permissions(lesson, user_id, user_role):
+            raise PermissionDenied("You don't have permission to edit this lesson")
 
         return content
 
@@ -423,6 +420,54 @@ class LessonContentDetailView(generics.RetrieveUpdateDestroyAPIView):
             module_slug=module_slug,
             lesson_slug=lesson_slug,
         )
+
+
+class LessonContentDisplayView(generics.RetrieveAPIView, LessonAccessMixin):
+    """
+    Отдельное View для отображения контента на странице урока.
+    """
+
+    serializer_class = LessonContentDisplaySerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = "id"
+    lookup_url_kwarg = "content_id"
+
+    def get_queryset(self):
+        course_slug = self.kwargs.get("course_slug")
+        module_slug = self.kwargs.get("module_slug")
+        lesson_slug = self.kwargs.get("lesson_slug")
+        content_id = self.kwargs.get("content_id")
+
+        return LessonContent.objects.filter(
+            id=content_id,
+            lesson__slug=lesson_slug,
+            lesson__module__slug=module_slug,
+            lesson__module__course__slug=course_slug,
+        )
+
+    def get_object(self):
+        content = super().get_object()
+        lesson = content.lesson
+
+        user_id = self.request.user_data.get("id")
+        user_role = self.request.user_data.get("role", {}).get("name")
+
+        if not self._check_lesson_access(lesson, user_id, user_role):
+            raise PermissionDenied("You don't have access to this lesson")
+
+        return content
+
+    def retrieve(self, request, *args, **kwargs):
+        course_slug = kwargs.get("course_slug")
+        module_slug = kwargs.get("module_slug")
+        lesson_slug = kwargs.get("lesson_slug")
+        content_id = kwargs.get("content_id")
+
+        cache_key_prefix = f"lesson_content_display_{course_slug}_{module_slug}_{lesson_slug}_{content_id}"
+
+        decorator = cache_response(timeout=300, key_prefix=cache_key_prefix)
+        decorated_method = decorator(super().retrieve)
+        return decorated_method(self, request, *args, **kwargs)
 
 
 # --------------------------- ADMIN VIEWS ---------------------------
@@ -457,6 +502,8 @@ class AdminLessonListView(generics.ListCreateAPIView):
             if "module" in serializer.fields:
                 serializer.fields["module"].read_only = False
                 serializer.fields["module"].required = True
+
+        return serializer
 
     def get_queryset(self):
         queryset = (
@@ -536,16 +583,18 @@ class AdminLessonDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         """Оптимизированный queryset для детального просмотра урока"""
-        return Lesson.objects.select_related(
-            "module__course"
-        ).prefetch_related(
-            Prefetch(
-                'content',
-                queryset=LessonContent.objects.order_by('order'),
-                to_attr='content_prefetched'
-            ),
-            'tasks'
-        ).all()
+        return (
+            Lesson.objects.select_related("module__course")
+            .prefetch_related(
+                Prefetch(
+                    "content",
+                    queryset=LessonContent.objects.order_by("order"),
+                    to_attr="content_prefetched",
+                ),
+                "tasks",
+            )
+            .all()
+        )
 
 
 class AdminLessonContentListView(generics.ListCreateAPIView):

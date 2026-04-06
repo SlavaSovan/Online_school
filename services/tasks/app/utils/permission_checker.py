@@ -56,7 +56,9 @@ class IsMentor:
         role = user.get("role", {})
         role_name = role.get("name", "")
 
-        if role_name != "mentor":
+        is_mentor = role_name in ["mentor", "admin"]
+
+        if not is_mentor:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Mentor or administrator role required",

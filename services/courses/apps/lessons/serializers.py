@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from rest_framework import serializers
 from .models import Lesson, LessonContent, LessonTask
 
@@ -264,3 +265,55 @@ class LessonSerializer(serializers.ModelSerializer):
             qs = obj.content.all().order_by("order")
 
         return LessonContentSerializer(qs, many=True, context=self.context).data
+
+
+class LessonContentDisplaySerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+    content = serializers.SerializerMethodField()
+    filename = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LessonContent
+        fields = (
+            "id",
+            "content_type",
+            "order",
+            "filename",
+            "file_size",
+            "url",
+            "content",
+        )
+        read_only_fields = fields
+
+    def get_filename(self, obj):
+        """Получаем имя файла"""
+        return obj.original_filename or Path(obj.file.name).name
+
+    def get_url(self, obj):
+        """Для немаркдаун контента возвращаем подписанный URL"""
+        if obj.content_type != "markdown":
+            return obj.get_download_url()
+        return None
+
+    def get_content(self, obj):
+        """Для markdown читаем и возвращаем содержимое"""
+        if obj.content_type == "markdown":
+            try:
+                # Читаем файл с начала
+                obj.file.seek(0)
+                return obj.file.read().decode("utf-8")
+            except Exception as e:
+                # Логируем ошибку, но не прерываем выполнение
+                print(f"Error reading markdown file {obj.id}: {e}")
+                return None
+        return None
+
+    def to_representation(self, instance):
+        """Дополнительная обработка при необходимости"""
+        data = super().to_representation(instance)
+
+        # Можно добавить мета-информацию о файле
+        if data["content_type"] == "markdown" and data["content"] is None:
+            data["error"] = "Could not read markdown content"
+
+        return data

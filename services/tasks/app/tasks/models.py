@@ -22,7 +22,8 @@ class Task(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    max_attempts: Mapped[int] = mapped_column(Integer, default=1)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_score: Mapped[int] = mapped_column(Integer, default=5)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -31,9 +32,22 @@ class Task(Base):
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )
 
-    questions = relationship("Question", back_populates="task", cascade="all, delete")
-    submissions = relationship("Submission", back_populates="task")
-    code_task = relationship("CodeTask", uselist=False, back_populates="task")
+    questions = relationship(
+        "Question",
+        back_populates="task",
+        cascade="all, delete",
+    )
+    submissions = relationship(
+        "Submission",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    code_task = relationship(
+        "CodeTask",
+        back_populates="task",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     def to_dict(self) -> dict:
         """Конвертация объекта в словарь"""
@@ -46,6 +60,7 @@ class Task(Base):
             "order": self.order,
             "is_active": self.is_active,
             "max_attempts": self.max_attempts,
+            "max_score": self.max_score,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

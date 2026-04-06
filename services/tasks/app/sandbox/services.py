@@ -1,201 +1,92 @@
 import asyncio
-import json
+import logging
 from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.submissions.models import Submission
-from app.tasks.models import Task
-from app.sandbox.models import CodeTask, SandboxExecution
-from app.sandbox.utils.runner import DockerRunner
-from app.tasks.services import TaskService
-from app.utils.enums import SubmissionStatus, CodeLanguage, TaskType
+from app.sandbox.models import CodeTask
+from app.sandbox.schemas import CodeRunResponseSchema, CodeTaskResponseSchema
+from app.sandbox.runner import DockerRunner
+from app.utils.enums import CodeLanguage
+
+
+logger = logging.getLogger(__name__)
 
 
 class SandboxService:
 
     @staticmethod
-    async def get_by_id_and_task_id(db: AsyncSession, code_task_id: int, task_id: UUID):
-        code_task = await db.execute(
-            select(CodeTask).where(
-                CodeTask.id == code_task_id, CodeTask.task_id == task_id
-            )
-        )
-        result = code_task.scalar_one_or_none()
-        if not result:
-            raise HTTPException(status_code=404, detail="CodeTask not found")
-
-        return result
-
-    @staticmethod
-    async def create_code_task(
+    async def get_code_task(
         db: AsyncSession,
         task_id: UUID,
-        language: CodeLanguage,
-        template_code: str,
-        tests_definition: dict,
-        time_limit: int,
-        memory_limit: int,
-    ) -> CodeTask:
-        task = await TaskService.get_by_id(db, task_id)
+    ) -> CodeTaskResponseSchema:
+        """Получение кодовой задачи по ID задания"""
+        result = await db.execute(select(CodeTask).where(CodeTask.task_id == task_id))
+        code_task = result.scalar_one_or_none()
 
-        existing = await db.execute(select(CodeTask).where(CodeTask.task_id == task_id))
-        if existing.scalar_one_or_none():
+        if not code_task:
             raise HTTPException(
-                status_code=400, detail="Code task already exists for this task"
+                status_code=404, detail="Code task not found for this task"
             )
 
-        if task.task_type != TaskType.SANDBOX:
-            raise HTTPException(
-                status_code=400,
-                detail="Code tasks can only be created for SANDBOX tasks",
-            )
-
-        code_task = CodeTask(
-            task_id=task_id,
-            language=language,
-            template_code=template_code,
-            tests_definition=json.dumps(tests_definition),
-            time_limit=time_limit,
-            memory_limit=memory_limit,
-        )
-
-        db.add(code_task)
-        await db.commit()
-        await db.refresh(code_task)
-        return code_task
+        return CodeTaskResponseSchema.model_validate(code_task)
 
     @staticmethod
-    async def update_code_task(
-        db: AsyncSession,
-        code_task_id: int,
-        task_id: UUID,
-        data: dict,
-    ) -> CodeTask:
-        code_task = await SandboxService.get_by_id_and_task_id(
-            db, code_task_id, task_id
-        )
-        for field, value in data.items():
-            if field == "tests_definition" and value is not None:
-                value = json.dumps(value)
-            if value is not None:
-                setattr(code_task, field, value)
-
-        await db.commit()
-        await db.refresh(code_task)
-        return code_task
-
-    @staticmethod
-    async def delete_code_task(
-        db: AsyncSession,
-        code_task_id: int,
-        task_id: UUID,
-    ) -> None:
-        code_task = await SandboxService.get_by_id_and_task_id(
-            db, code_task_id, task_id
-        )
-        await db.delete(code_task)
-        await db.commit()
-
-    @staticmethod
-    async def process_submission(
-        db: AsyncSession,
-        submission_id: int,
-    ) -> None:
-        """Обработка отправки кода в песочнице"""
+    async def execute_code(
+        code: str,
+        language: str,
+    ) -> CodeRunResponseSchema:
+        """
+        Выполнение кода (без сохранения, без проверки прав).
+        Использует фиксированные ограничения ресурсов.
+        """
         try:
-            submission = await db.get(Submission, submission_id, with_for_update=True)
-            if not submission:
-                raise ValueError(f"Submission {submission_id} not found")
+            if len(code) > 10000:
+                return CodeRunResponseSchema(
+                    success=False,
+                    output="",
+                    error="Code size exceeds limit (10KB)",
+                )
 
-            code_task_result = await db.execute(
-                select(CodeTask).join(Task).where(Task.id == submission.task_id)
+            try:
+                lang = CodeLanguage(language.lower())
+            except ValueError:
+                return CodeRunResponseSchema(
+                    success=False,
+                    output="",
+                    error=f"Language {language} is not supported.",
+                )
+
+            # Пока поддерживаем только Python
+            if lang != CodeLanguage.PYTHON:
+                return CodeRunResponseSchema(
+                    success=False,
+                    output="",
+                    error=f"Language {lang.value} is not yet implemented.",
+                )
+
+            result = await asyncio.wait_for(
+                asyncio.to_thread(DockerRunner.run_python, code),
+                timeout=7,
             )
-            code_task = code_task_result.scalar_one_or_none()
 
-            if not code_task:
-                raise ValueError(f"Code task not found for submission {submission_id}")
+            return CodeRunResponseSchema(
+                success=result.success,
+                output=result.output,
+                error=result.error,
+            )
 
-            if code_task.language != CodeLanguage.PYTHON:
-                submission.status = SubmissionStatus.FAILED
-                submission.feedback = {
-                    "error": f"Unsupported language: {code_task.language}"
-                }
-                await db.commit()
-                return
-
-            payload = submission.payload
-            if payload.get("type") != "sandbox" or "code" not in payload:
-                submission.status = SubmissionStatus.FAILED
-                submission.feedback = {"error": "Invalid payload for sandbox task"}
-                await db.commit()
-                return
-
-            user_code = payload["code"]
-
-            if len(user_code) > 10000:
-                submission.status = SubmissionStatus.FAILED
-                submission.feedback = {"error": "Code size exceeds limit (10KB)"}
-                await db.commit()
-                return
-
-            try:
-                tests_definition = json.loads(code_task.tests_definition)
-                function_name = tests_definition.get("function_name", "solution")
-            except json.JSONDecodeError:
-                submission.status = SubmissionStatus.FAILED
-                submission.feedback = {"error": "Invalid tests definition"}
-                await db.commit()
-                return
-
-            try:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        DockerRunner.run_python,
-                        code=user_code,
-                        tests=tests_definition,
-                        function_name=function_name,
-                        time_limit=code_task.time_limit,
-                        memory_limit=code_task.memory_limit,
-                    ),
-                    timeout=code_task.time_limit + 5,  # Дополнительное время на запуск
-                )
-
-                submission.status = (
-                    SubmissionStatus.PASSED
-                    if result.success
-                    else SubmissionStatus.FAILED
-                )
-                submission.feedback = {
-                    "success": result.success,
-                    "passed": result.passed,
-                    "failed": result.failed,
-                    "results": [r.__dict__ for r in result.results],
-                }
-
-                # Сохраняем execution
-                execution = SandboxExecution(submission_id=submission.id, result=result)
-                db.add(execution)
-
-            except asyncio.TimeoutError:
-                submission.status = SubmissionStatus.FAILED
-                submission.feedback = {"error": "Execution timeout"}
-            except Exception as e:
-                submission.status = SubmissionStatus.FAILED
-                submission.feedback = {"error": f"Execution error: {str(e)}"}
-
-            await db.commit()
-
+        except asyncio.TimeoutError:
+            return CodeRunResponseSchema(
+                success=False,
+                output="",
+                error="Execution timeout (exceeded 7 seconds)",
+            )
         except Exception as e:
-            # Логируем ошибку
-            print(f"Error processing submission {submission_id}: {e}")
-            # Пробуем обновить статус submission
-            try:
-                if submission:
-                    submission.status = SubmissionStatus.FAILED
-                    submission.feedback = {"error": f"Processing error: {str(e)}"}
-                    await db.commit()
-            except:
-                pass
-            raise
+            logger.error(f"Error executing code: {e}")
+            return CodeRunResponseSchema(
+                success=False,
+                output="",
+                error=f"Execution error",
+            )

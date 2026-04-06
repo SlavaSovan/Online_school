@@ -71,9 +71,10 @@ class CourseService:
         """Общий метод для выполнения асинхронных запросов с кешированием"""
 
         try:
-            response = await HTTPClient.get(
-                url, headers={"Authorization": f"Bearer {token}"}
-            )
+            client = await HTTPClient.get_client()
+            headers = {"Authorization": f"Bearer {token}"}
+
+            response = await client.get(url, headers=headers)
 
             if response.status_code == 200:
                 return response.json()
@@ -92,7 +93,7 @@ class CourseService:
     async def get_all_courses(token: str) -> List[Dict[str, Any]]:
         """Получение всех курсов с пагинацией"""
         data = await CourseService._make_request(
-            f"{settings.COURSE_SERVICE_URL}/courses/", token
+            f"{settings.COURSE_SERVICE_URL}/courses", token
         )
 
         if data and isinstance(data, dict):
@@ -117,7 +118,7 @@ class CourseService:
         """
         url = (
             f"{settings.COURSE_SERVICE_URL}/courses/{course_slug}/"
-            f"modules/{module_slug}/lessons/{lesson_slug}/"
+            f"modules/{module_slug}/lessons/{lesson_slug}"
         )
         return await CourseService._make_request(url, token)
 
@@ -135,7 +136,7 @@ class CourseService:
         Получение списка курсов, на которые записан текущий пользователь.
         """
         data = await CourseService._make_request(
-            f"{settings.COURSE_SERVICE_URL}/my/enrollments/", token
+            f"{settings.COURSE_SERVICE_URL}/my/enrollments", token
         )
         if data and isinstance(data, dict):
             return data.get("results", [])
@@ -154,18 +155,23 @@ class CourseService:
 
         for course in all_courses:
             course_slug = course.get("slug")
-            if course_slug:
-                course_detail = await CourseService.get_course_detail(
-                    course_slug, token
-                )
-                if course_detail and "lessons" in course_detail:
-                    for lesson in course_detail["lessons"]:
-                        lesson["course_info"] = {
-                            "id": course.get("id"),
-                            "slug": course_slug,
-                            "title": course.get("title"),
-                        }
-                    all_lessons.extend(course_detail["lessons"])
+            if not course_slug:
+                continue
+
+            course_detail = await CourseService.get_course_detail(course_slug, token)
+            if not course_detail:
+                continue
+
+            modules = course_detail.get("modules", [])
+            for module in modules:
+                lessons = module.get("lessons", [])
+                for lesson in lessons:
+                    lesson["course_info"] = {
+                        "id": course_detail.get("id"),
+                        "slug": course_slug,
+                        "title": course_detail.get("title"),
+                    }
+                    all_lessons.append(lesson)
 
         return all_lessons
 
@@ -247,20 +253,42 @@ class CourseService:
         Получение полной информации о курсе по lesson_id.
         Возвращает словарь с информацией о курсе, содержащем данный урок.
         """
-        all_lessons = await CourseService.get_all_lessons_from_all_courses(token)
+        all_courses = await CourseService.get_all_courses(token)
 
-        for lesson in all_lessons:
-            if lesson.get("id") == lesson_id and "course_info" in lesson:
-                return {
-                    "course_id": lesson["course_info"].get("id"),
-                    "course_slug": lesson["course_info"].get("slug"),
-                    "course_title": lesson["course_info"].get("title"),
-                    "lesson_info": {
-                        "id": lesson.get("id"),
-                        "title": lesson.get("title"),
-                        "slug": lesson.get("slug"),
-                    },
-                }
+        for course in all_courses:
+            course_slug = course.get("slug")
+            if not course_slug:
+                continue
+
+            # Получаем детальную информацию о курсе
+            course_detail = await CourseService.get_course_detail(course_slug, token)
+            if not course_detail:
+                continue
+
+            # Ищем урок в модулях курса
+            modules = course_detail.get("modules", [])
+            for module in modules:
+                lessons = module.get("lessons", [])
+                for lesson in lessons:
+                    if lesson.get("id") == lesson_id:
+                        # Нашли нужный урок
+                        return {
+                            "course_id": course_detail.get("id"),
+                            "course_slug": course_detail.get("slug"),
+                            "course_title": course_detail.get("title"),
+                            "module_info": {
+                                "id": module.get("id"),
+                                "slug": module.get("slug"),
+                                "title": module.get("title"),
+                            },
+                            "lesson_info": {
+                                "id": lesson.get("id"),
+                                "title": lesson.get("title"),
+                                "slug": lesson.get("slug"),
+                            },
+                        }
+
+        logger.warning(f"Lesson {lesson_id} not found in any course")
         return None
 
     @staticmethod

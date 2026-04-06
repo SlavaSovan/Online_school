@@ -1,19 +1,16 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-
+from app.tasks.services import TaskService
+from app.submissions.services import SubmissionService
+from app.reviews.services import ReviewService
 from app.reviews.schemas import (
     ReviewCreateSchema,
     ReviewResponseSchema,
     ReviewUpdateSchema,
 )
-from app.reviews.services import ReviewService
-
-from app.submissions.services import SubmissionService
-
-from app.tasks.services import TaskService
 from app.utils.cache_decorator import invalidate_cache
 from app.utils.permission_checker import IsAuthenticated, IsMentor
 from app.utils.course_dependencies import (
@@ -35,8 +32,8 @@ async def validate_review_access(
 ):
     """Общая функция для проверки доступа к отзыву"""
     task = await TaskService.get_by_id(db, task_id)
-    submission = await SubmissionService.get_by_id_and_task_id(
-        db, submission_id=submission_id
+    await SubmissionService.get_by_id_and_task_id(
+        db, submission_id=submission_id, task_id=task_id
     )
 
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
@@ -49,7 +46,7 @@ async def validate_review_access(
 
 
 @router.post(
-    "/tasks/{task_id}/submissions/{submission_id}/review/",
+    "/tasks/{task_id}/submissions/{submission_id}/review",
     response_model=ReviewResponseSchema,
     dependencies=[Depends(IsMentor())],
 )
@@ -64,7 +61,6 @@ async def mentor_create_review(
     db: AsyncSession = Depends(get_db),
 ):
     await validate_review_access(db, task_id, submission_id, request, check_mentor=True)
-
     mentor_id = request.state.user_data["id"]
 
     return await ReviewService.create(
@@ -76,7 +72,7 @@ async def mentor_create_review(
 
 
 @router.get(
-    "/tasks/{task_id}/submissions/{submission_id}/review/",
+    "/tasks/{task_id}/submissions/{submission_id}/review",
     response_model=ReviewResponseSchema,
     dependencies=[Depends(IsAuthenticated())],
 )
@@ -92,12 +88,11 @@ async def get_review(
     await validate_review_access(
         db, task_id, submission_id, request, check_mentor=False
     )
-    review = await ReviewService.get_by_submission_id(db, submission_id)
-    return review
+    return await ReviewService.get_by_submission_id(db, submission_id)
 
 
 @router.patch(
-    "/tasks/{task_id}/submissions/{submission_id}/review/",
+    "/tasks/{task_id}/submissions/{submission_id}/review",
     response_model=ReviewResponseSchema,
     dependencies=[Depends(IsMentor())],
 )
@@ -117,12 +112,12 @@ async def mentor_update_review(
     mentor_id = request.state.user_data["id"]
 
     return await ReviewService.update_by_mentor(
-        db, review=review, mentor_id=mentor_id, payload=payload
+        db, review_id=review.id, mentor_id=mentor_id, payload=payload
     )
 
 
 @router.delete(
-    "/tasks/{task_id}/submissions/{submission_id}/review/",
+    "/tasks/{task_id}/submissions/{submission_id}/review",
     dependencies=[Depends(IsMentor())],
 )
 @invalidate_cache(
@@ -138,8 +133,7 @@ async def mentor_delete_review(
     await validate_review_access(db, task_id, submission_id, request, check_mentor=True)
 
     review = await ReviewService.get_by_submission_id(db, submission_id)
-
     mentor_id = request.state.user_data["id"]
 
-    await ReviewService.delete_by_mentor(db, review, mentor_id)
+    await ReviewService.delete_by_mentor(db, review.id, mentor_id)
     return {"status": "deleted"}

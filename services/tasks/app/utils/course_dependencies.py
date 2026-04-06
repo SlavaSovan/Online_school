@@ -50,10 +50,8 @@ class CheckMentorIsOwner:
     def __init__(self, course_slug: str):
         self.course_slug = course_slug
 
-    async def __call__(
-        self, request: Request, user: Dict[str, Any] = Depends(IsMentor())
-    ) -> bool:
-        mentor_id = user.get("id")
+    async def __call__(self, request: Request) -> bool:
+        mentor_id = request.state.user_data["id"]
         if not mentor_id:
             raise HTTPException(status_code=400, detail="Mentor ID not found")
 
@@ -77,10 +75,8 @@ class CheckMentorCourseAccess:
     def __init__(self, course_slug: str):
         self.course_slug = course_slug
 
-    async def __call__(
-        self, request: Request, user: Dict[str, Any] = Depends(IsMentor())
-    ) -> bool:
-        mentor_id = user.get("id")
+    async def __call__(self, request: Request) -> bool:
+        mentor_id = request.state.user_data["id"]
         if not mentor_id:
             raise HTTPException(status_code=400, detail="Mentor ID not found")
 

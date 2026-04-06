@@ -8,14 +8,12 @@ class TaskType(str, Enum):
 
 
 class QuestionType(str, Enum):
-    SINGLE_CHOIE = "single_choice"
+    SINGLE_CHOICE = "single_choice"
     MULTIPLE_CHOICE = "multiple_choice"
     SHORT_ANSWER = "short_answer"
 
 
 class SubmissionStatus(str, Enum):
-    QUEUED = "queued"
-    RUNNING = "running"
     PASSED = "passed"
     FAILED = "failed"
     NEEDS_REVIEW = "needs_review"

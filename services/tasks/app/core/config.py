@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     REDIS: RedisSettings
     S3: S3Settings
 
+    USER_SERVICE_URL: str
+    COURSE_SERVICE_URL: str
+
+    FILES: FileSettings = FileSettings()
+
     model_config = ConfigDict(
         env_nested_delimiter="__",
         extra="ignore",

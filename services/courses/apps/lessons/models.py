@@ -100,34 +100,49 @@ class LessonContent(models.Model):
         unique_id = str(uuid.uuid4())[:8]
 
         if self.original_filename:
-            name_without_ext = Path(self.original_filename).stem
-            safe_name = name_without_ext.replace(" ", "_").replace("/", "_").lower()
-            ext = Path(self.original_filename).suffix.lower()
+            safe_name = (
+                self.original_filename.replace(" ", "_").replace("/", "_").lower()
+            )
         else:
-            safe_name = self.content_type
-            ext = ""
+            safe_name = "file"
 
-        safe_name = self.original_filename or "file"
-        safe_name = safe_name.replace(" ", "_").replace("/", "_").lower()
-
-        return f"{course_slug}/{module_slug}/{lesson_slug}/{unique_id}_{safe_name}{ext}"
+        return f"{course_slug}/{module_slug}/{lesson_slug}/{unique_id}_{safe_name}"
 
     def get_download_url(self, expire=3600):
-        if hasattr(self.file.storage, "url"):
-            return self.file.storage.url(self.file.name)
         return self.file.url
 
     def get_file_info(self):
+        """Информация о файле для API"""
         return {
-            "filename": (
-                self.original_filename or Path(self.file.name).name
-                if self.file
-                else None
-            ),
-            "size": self.file_size,
-            "url": self.get_download_url(),
+            "id": self.id,
+            "lesson": self.lesson.id,
             "content_type": self.content_type,
+            "file_url": self.get_download_url(),
+            "filename": self.original_filename or Path(self.file.name).name,
+            "file_size": self.file_size,
+            "order": self.order,
+            "original_filename": self.original_filename,
         }
+
+    def get_content_data(self):
+        """Получить данные контента для отображения"""
+        if self.content_type == "markdown":
+            try:
+                # Читаем содержимое markdown файла
+                content = self.file.read().decode("utf-8")
+                return {
+                    "type": "markdown",
+                    "content": content,
+                    "metadata": self.get_file_info(),
+                }
+            except Exception as e:
+                return {"type": "error", "message": f"Error reading markdown: {str(e)}"}
+        else:
+            return {
+                "type": self.content_type,
+                "url": self.get_download_url(),
+                "metadata": self.get_file_info(),
+            }
 
     def delete(self, *args, **kwargs):
         """Переопределяем удаление для корректного удаления файла"""
@@ -143,7 +158,7 @@ class LessonContent(models.Model):
 
 
 class LessonTask(models.Model):
-    task_uuid = models.UUIDField(primary_key=True, unique=True)
+    task_uuid = models.UUIDField(unique=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=255)
     lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name="tasks")
 
@@ -153,4 +168,4 @@ class LessonTask(models.Model):
     order = models.PositiveIntegerField(default=1)
 
     def __str__(self):
-        return f"Task {self.task_uuid}"
+        return f"Task {self.task_uuid} - {self.title}"

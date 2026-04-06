@@ -1,6 +1,6 @@
 import django_filters
 from django.db.models import Q
-from .models import Lesson, LessonContent, LessonTask
+from .models import Lesson, LessonContent
 
 
 class AdminLessonFilter(django_filters.FilterSet):

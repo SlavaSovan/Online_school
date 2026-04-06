@@ -32,7 +32,7 @@ services:
       PGADMIN_DEFAULT_PASSWORD: admin
       PGADMIN_CONFIG_SERVER_MODE: 'False'
     ports:
-      - "5050:5050"
+      - "5050:80"
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,7 +95,6 @@ services:
       dockerfile: Dockerfile
     image: sandbox-python:latest
     container_name: sandbox-builder
-    profiles: ["build"]  # Запускается только при сборке
     restart: "no"
 
 
@@ -136,6 +135,7 @@ services:
       context: ./services/courses
       dockerfile: Dockerfile
     container_name: courses-service
+    command: python manage.py runserver 0.0.0.0:8000
     environment:
       SECRET_KEY: ${COURSES_SECRET_KEY}
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,courses-service,nginx,api-gateway
@@ -150,6 +150,7 @@ services:
       S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME}
       S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_URL: http://localhost:9000
       S3_REGION: us-east-1
       MAX_FILE_SIZE_MB: ${COURSES_MAX_FILE_SIZE_MB}
       USERS_SERVICE_URL: ${USERS_SERVICE_URL}
@@ -167,10 +168,35 @@ services:
       users-service:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 8s
       timeout: 8s
       retries: 5
+    restart: unless-stopped
+
+  courses-listener:
+    build:
+      context: ./services/courses
+      dockerfile: Dockerfile
+    container_name: courses-listener
+    command: python manage.py run_event_listener
+    environment:
+      SECRET_KEY: ${COURSES_SECRET_KEY}
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,courses-service,nginx,api-gateway
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${COURSES_DB_NAME}
+      DB_USER: ${COURSES_DB_USER}
+      DB_PASSWORD: ${COURSES_DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      courses-service:
+        condition: service_healthy
     restart: unless-stopped
 
   tasks-service:
@@ -191,12 +217,12 @@ services:
       S3__S3_BUCKET_NAME: ${S3_BUCKET_NAME}
       S3__S3_ENDPOINT_URL: http://minio:9000
       S3__S3_REGION: us-east-1
-      USERS_SERVICE_URL: ${USERS_SERVICE_URL}
-      COURSES_SERVICE_URL: ${COURSES_SERVICE_URL}
+      USER_SERVICE_URL: ${USERS_SERVICE_URL}
+      COURSE_SERVICE_URL: ${COURSES_SERVICE_URL}
       # Переменная для docker.from_env() (указываю явно, но это не обязательно)
       DOCKER_HOST: unix:///var/run/docker.sock
     expose:
-      - "8001"
+      - "8003"
     # ports:
     #   - "8003:8000"
     volumes:

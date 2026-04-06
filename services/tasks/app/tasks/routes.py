@@ -4,9 +4,11 @@ from uuid import UUID
 
 from app.core.database import get_db
 from app.tasks.schemas import (
-    TaskCreateSchema,
+    FileTaskCreateSchema,
+    SandboxTaskCreateSchema,
     TaskUpdateSchema,
     TaskResponseSchema,
+    TestTaskCreateSchema,
 )
 from app.tasks.services import TaskService
 
@@ -28,7 +30,7 @@ router = APIRouter(prefix="", tags=["Tasks"])
 
 
 @router.get(
-    "/tasks/{task_id}/",
+    "/tasks/{task_id}",
     response_model=TaskResponseSchema,
     dependencies=[Depends(IsAuthenticated())],
 )
@@ -45,13 +47,13 @@ async def get_task(
 
 
 @router.post(
-    "/courses/{course_slug}/modules/{module_slug}/lessons/{lesson_slug}/tasks/",
+    "/courses/{course_slug}/modules/{module_slug}/lessons/{lesson_slug}/tasks/test",
     response_model=TaskResponseSchema,
     dependencies=[Depends(IsMentor())],
 )
 @invalidate_cache(keys=["task:*"])
-async def create_task(
-    payload: TaskCreateSchema,
+async def create_test_task(
+    payload: TestTaskCreateSchema,
     request: Request,
     course_slug: str,
     module_slug: str,
@@ -63,11 +65,55 @@ async def create_task(
         request
     )
 
-    return await TaskService.create(db, payload, lesson_detail["id"])
+    return await TaskService.create_test_task(db, payload, lesson_detail["id"])
+
+
+@router.post(
+    "/courses/{course_slug}/modules/{module_slug}/lessons/{lesson_slug}/tasks/sandbox",
+    response_model=TaskResponseSchema,
+    dependencies=[Depends(IsMentor())],
+)
+@invalidate_cache(keys=["task:*"])
+async def create_sandbox_task(
+    payload: SandboxTaskCreateSchema,
+    request: Request,
+    course_slug: str,
+    module_slug: str,
+    lesson_slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await CheckMentorIsOwner(course_slug=course_slug)(request)
+    lesson_detail = await GetLessonDetail(course_slug, module_slug, lesson_slug)(
+        request
+    )
+
+    return await TaskService.create_sandbox_task(db, payload, lesson_detail["id"])
+
+
+@router.post(
+    "/courses/{course_slug}/modules/{module_slug}/lessons/{lesson_slug}/tasks/file",
+    response_model=TaskResponseSchema,
+    dependencies=[Depends(IsMentor())],
+)
+@invalidate_cache(keys=["task:*"])
+async def create_file_task(
+    payload: FileTaskCreateSchema,
+    request: Request,
+    course_slug: str,
+    module_slug: str,
+    lesson_slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await CheckMentorIsOwner(course_slug=course_slug)(request)
+    lesson_detail = await GetLessonDetail(course_slug, module_slug, lesson_slug)(
+        request
+    )
+
+    return await TaskService.create_file_task(db, payload, lesson_detail["id"])
 
 
 @router.patch(
-    "/tasks/{task_id}/",
+    "/tasks/{task_id}",
     response_model=TaskResponseSchema,
     dependencies=[Depends(IsMentor())],
 )
@@ -81,16 +127,15 @@ async def update_task(
     db: AsyncSession = Depends(get_db),
 ):
     task = await TaskService.get_by_id(db, task_id)
+
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
     await CheckMentorIsOwner(course_slug=course_info["course_slug"])(request)
 
-    data = payload.model_dump(exclude_unset=True)
-
-    return await TaskService.update(db, task, data)
+    return await TaskService.update(db, task_id, payload)
 
 
 @router.delete(
-    "/tasks/{task_id}/",
+    "/tasks/{task_id}",
     dependencies=[Depends(IsMentor())],
 )
 @invalidate_cache(
@@ -103,9 +148,10 @@ async def delete_task(
     db: AsyncSession = Depends(get_db),
 ):
     task = await TaskService.get_by_id(db, task_id)
+
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
     await CheckMentorIsOwner(course_slug=course_info["course_slug"])(request)
 
-    await TaskService.delete(db, task)
+    await TaskService.delete(db, task_id)
 
     return {"status": "deleted"}

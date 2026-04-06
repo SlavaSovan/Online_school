@@ -1,8 +1,9 @@
-import datetime
 import os
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any, Dict
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from aiobotocore.session import get_session
 from botocore.exceptions import ClientError
@@ -19,7 +20,7 @@ class S3Client:
             "endpoint_url": settings.S3.S3_ENDPOINT_URL,
             "region_name": settings.S3.S3_REGION,
         }
-        self.bucket_name = settings.S3.S3_BUCKET_NAME
+        self.bucket = settings.S3.S3_BUCKET_NAME
         self.session = get_session()
 
     @asynccontextmanager
@@ -65,6 +66,20 @@ class S3Client:
 
         return f"users/{user_id}/tasks/{task_id}/{new_filename}"
 
+    def _sanitize_metadata_value(self, value: str) -> str:
+        """
+        Очистка значения для S3 метаданных.
+        Оставляет только ASCII символы.
+        """
+        if not value:
+            return ""
+
+        # Нормализуем Unicode
+        value = unicodedata.normalize("NFKD", value)
+        # Оставляем только ASCII символы
+        value = value.encode("ascii", "ignore").decode("ascii")
+        return value
+
     async def upload_file(
         self,
         file: UploadFile,
@@ -72,43 +87,47 @@ class S3Client:
         task_id: uuid.UUID,
     ) -> Dict[str, Any]:
         """Загрузка файла в S3"""
-        max_size = settings.FILES.MAX_FILE_SIZE_MB
+        max_size = settings.FILES.MAX_FILE_SIZE_MB * 1024 * 1024
         contents = await file.read()
         contents_size = len(contents)
 
         if contents_size > max_size:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"File size exceeds maximum limit of {settings.FILES.MAX_FILE_SIZE_MB} Mb",
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=f"File size ({contents_size / (1024*1024):.2f} MB) exceeds maximum limit of {settings.FILES.MAX_FILE_SIZE_MB} Mb",
             )
+
+        original_filename = file.filename or "file"
 
         file_key = self._generate_file_key(
             user_id=user_id,
             task_id=str(task_id),
-            filename=file.filename or "file",
+            filename=original_filename,
         )
+
+        sanitized_filename = self._sanitize_metadata_value(original_filename)
 
         try:
             async with self.get_client() as client:
                 await client.put_object(
-                    Bucket=self.bucket_name,
+                    Bucket=self.bucket,
                     Key=file_key,
                     Body=contents,
                     ContentType=file.content_type or "application/octet-stream",
                     Metadata={
                         "user_id": str(user_id),
-                        "task_id": task_id,
-                        "orginal_filename": file.filename or "",
-                        "uploaded_at": datetime.utcnow().isoformat(),
+                        "task_id": str(task_id),
+                        "orginal_filename": sanitized_filename,
+                        "uploaded_at": datetime.now(timezone.utc).isoformat(),
                     },
                 )
 
                 return {
-                    "file_key": file_key,
-                    "original_filename": file.filename or "file",
+                    "s3_file_key": file_key,
+                    "original_filename": original_filename,
                     "size": contents_size,
                     "content_type": file.content_type,
-                    "bucket": self.bucket_name,
+                    "bucket": self.bucket,
                 }
         except ClientError as e:
             raise HTTPException(

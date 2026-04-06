@@ -1,10 +1,10 @@
 from functools import wraps
-from requests import Response
+from rest_framework.response import Response
 
 from apps.utils.cache_key_builder import CacheKeyBuilder
 
 
-def cache_response(timeout=300, key_prefix=None, vary_on_user=False):
+def cache_response(timeout=300, key_prefix=None):
     """
     Декоратор для кэширования ответов DRF views
 

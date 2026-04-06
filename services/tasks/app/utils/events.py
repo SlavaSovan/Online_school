@@ -19,10 +19,17 @@ async def _publish(queue_key: str, event_type: str, data: Dict[str, Any]):
         }
 
         message = json.dumps(event_data)
+        logger.info(
+            f"Publishing event to queue '{queue_key}': {event_type}, data: {data}"
+        )
 
         redis_client = await RedisClient.get_client()
 
-        result = redis_client.rpush(queue_key, message)
+        if not redis_client:
+            logger.error("Redis client is None")
+            return False
+
+        result = await redis_client.rpush(queue_key, message)
 
         if result:
             logger.debug(f"Pushed event to list '{queue_key}': {event_type}")
@@ -66,12 +73,12 @@ async def publish_task_updated(
         event_type="task.updated",
         data={
             "task_id": task_id_str,
-            "data": update_data,
+            **update_data,
         },
     )
 
 
-async def publish_task_deleted(task_id: UUID, queue_key: str = "task_events_queue"):
+async def publish_task_deleted(task_id: UUID, queue_key: str = "tasks_events_queue"):
     task_id_str = str(task_id)
     return await _publish(
         queue_key=queue_key,

@@ -45,9 +45,9 @@ class ModuleListView(generics.ListCreateAPIView):
         course_slug = kwargs.get("course_slug")
         cache_key_prefix = f"modules_list_{course_slug}"
 
-        return cache_response(timeout=300, key_prefix=cache_key_prefix)(super().list)(
-            request, *args, **kwargs
-        )
+        decorator = cache_response(timeout=180, key_prefix=cache_key_prefix)
+        decorated_method = decorator(super().list)
+        return decorated_method(self, request, *args, **kwargs)
 
     def get_queryset(self):
         course_slug = self.kwargs.get("course_slug")
@@ -258,6 +258,8 @@ class AdminModuleListView(generics.ListCreateAPIView):
         """Добавляем статистику в ответ"""
         queryset = self.filter_queryset(self.get_queryset())
         course_slug = self.kwargs.get("course_slug")
+
+        course_info = None
 
         if course_slug:
             course = get_object_or_404(Course, slug=course_slug)

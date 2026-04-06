@@ -12,6 +12,7 @@ def invalidate_cache(
     keys: Optional[List[str]] = None,
     before_call: bool = False,
     extract_user_from_request: bool = False,
+    extract_from_result: Optional[List[str]] = None,
 ):
     """
     Простой декоратор для инвалидации кэша
@@ -48,10 +49,20 @@ def invalidate_cache(
                 for key_template in keys:
                     key = _resolve_key(key_template, context)
                     if key:
-                        await RedisCacheClient.delete(key)
+                        if "*" in key:
+                            await RedisCacheClient.delete_pattern(key)
+                        else:
+                            await RedisCacheClient.delete(key)
                         logger.debug(f"Invalidated cache (before): {key}")
 
             result = await func(*args, **kwargs)
+
+            if extract_from_result:
+                for field in extract_from_result:
+                    if hasattr(result, field):
+                        context[field] = getattr(result, field)
+                    elif isinstance(result, dict) and field in result:
+                        context[field] = result[field]
 
             if not before_call and keys:
                 if isinstance(result, dict):
@@ -63,7 +74,10 @@ def invalidate_cache(
                     key = _resolve_key(key_template, context)
 
                     if key:
-                        await RedisCacheClient.delete(key)
+                        if "*" in key:
+                            await RedisCacheClient.delete_pattern(key)
+                        else:
+                            await RedisCacheClient.delete(key)
                         logger.debug(f"Invalidated cache key (after): {key}")
             return result
 

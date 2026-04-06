@@ -70,7 +70,7 @@ def upgrade() -> None:
         sa.Column(
             "question_type",
             sa.Enum(
-                "SINGLE_CHOIE",
+                "SINGLE_CHOICE",
                 "MULTIPLE_CHOICE",
                 "SHORT_ANSWER",
                 name="questiontype",
@@ -94,8 +94,6 @@ def upgrade() -> None:
         sa.Column(
             "status",
             sa.Enum(
-                "QUEUED",
-                "RUNNING",
                 "PASSED",
                 "FAILED",
                 "NEEDS_REVIEW",

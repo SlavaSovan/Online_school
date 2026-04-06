@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.questions.schemas import (
     QuestionCreateSchema,
     QuestionResponseSchema,
+    QuestionStudentSchema,
 )
 from app.questions.services import QuestionService
 
@@ -47,11 +48,13 @@ async def get_task_and_check_access(
 
 
 @router.post(
-    "/tasks/{task_id}/questions/",
+    "/tasks/{task_id}/questions",
     response_model=QuestionResponseSchema,
     dependencies=[Depends(IsMentor())],
 )
-@invalidate_cache(keys=["questions:task:{task_id}*"])
+@invalidate_cache(
+    keys=["questions:mentor:task:{task_id}*", "questions:student:task:{task_id}*"]
+)
 async def mentor_create_question(
     task_id: UUID,
     payload: QuestionCreateSchema,
@@ -69,10 +72,13 @@ async def mentor_create_question(
 
 
 @router.delete(
-    "/tasks/{task_id}/questions/{question_id}/",
+    "/tasks/{task_id}/questions/{question_id}",
     dependencies=[Depends(IsMentor())],
 )
-@invalidate_cache(keys=["questions:task:{task_id}*"], before_call=True)
+@invalidate_cache(
+    keys=["questions:mentor:task:{task_id}*", "questions:student:task:{task_id}*"],
+    before_call=True,
+)
 async def mentor_delete_question(
     task_id: UUID,
     question_id: int,
@@ -84,15 +90,15 @@ async def mentor_delete_question(
     """
 
     task = await get_task_and_check_access(task_id, request, db, check_mentor=True)
-    await QuestionService.delete(question_id)
+    await QuestionService.delete(db=db, question_id=question_id)
 
     return {"status": "deleted"}
 
 
 @router.get(
-    "/tasks/{task_id}/questions/",
+    "/tasks/{task_id}/questions",
     response_model=List[QuestionResponseSchema],
-    dependencies=[Depends(IsAuthenticated())],
+    dependencies=[Depends(IsMentor())],
 )
 async def list_questions_for_task(
     task_id: UUID,
@@ -100,10 +106,27 @@ async def list_questions_for_task(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Получение вопроса для тестового задания.
+    Получение вопроса для тестового задания (для ментора).
     """
 
-    task = await get_task_and_check_access(task_id, request, db, check_mentor=False)
-    questions = await QuestionService.get_for_task(db, task_id)
+    task = await get_task_and_check_access(task_id, request, db, check_mentor=True)
+    questions = await QuestionService.get_for_task_mentor(db, task_id)
+    return questions
 
+
+@router.get(
+    "/tasks/{task_id}/test",
+    response_model=List[QuestionStudentSchema],
+    dependencies=[Depends(IsAuthenticated())],
+)
+async def list_questions_for_task_student(
+    task_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Получение вопросов для тестового задания (для студента).
+    """
+    task = await get_task_and_check_access(task_id, request, db, check_mentor=False)
+    questions = await QuestionService.get_for_task_student(db, task_id)
     return questions

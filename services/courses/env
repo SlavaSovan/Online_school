@@ -1,0 +1,7 @@
+SECRET_KEY="django-insecure-c4mns^@7c32n&1#%2409wdx+mx))9(zjvudf26+db()67gauz&"
+
+DB_HOST=localhost
+DB_PORT=5433
+DB_NAME=courses
+DB_USER=coursesadmin
+DB_PASSWORD=coursesadmin

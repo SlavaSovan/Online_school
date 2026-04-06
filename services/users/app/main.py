@@ -30,6 +30,7 @@ app = FastAPI(
     debug=settings.DEBUG,
     docs_url=settings.API_PREFIX,
     lifespan=lifespan,
+    redirect_slashes=False,
 )
 
 app.add_middleware(

@@ -22,16 +22,14 @@ class Submission(Base):
     attempt: Mapped[int] = mapped_column(nullable=False)
     status: Mapped[SubmissionStatus] = mapped_column(
         Enum(SubmissionStatus),
-        default=SubmissionStatus.QUEUED,
+        default=SubmissionStatus.NEEDS_REVIEW,
         nullable=False,
         index=True,
     )
 
     score: Mapped[int] = mapped_column(nullable=True)
-    max_score: Mapped[int] = mapped_column(nullable=True)
 
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
-
     feedback: Mapped[dict] = mapped_column(JSON, nullable=True)
 
     s3_file_key: Mapped[str] = mapped_column(String(500), nullable=True)
