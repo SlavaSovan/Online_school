@@ -138,7 +138,7 @@ services:
     command: python manage.py runserver 0.0.0.0:8000
     environment:
       SECRET_KEY: ${COURSES_SECRET_KEY}
-      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,courses-service,nginx,api-gateway
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,0.0.0.0,courses-service,nginx,api-gateway
       DB_HOST: postgres
       DB_PORT: 5432
       DB_NAME: ${COURSES_DB_NAME}

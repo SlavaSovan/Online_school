@@ -27,7 +27,7 @@ class Submission(Base):
         index=True,
     )
 
-    score: Mapped[int] = mapped_column(nullable=True)
+    score: Mapped[float] = mapped_column(nullable=True)
 
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     feedback: Mapped[dict] = mapped_column(JSON, nullable=True)

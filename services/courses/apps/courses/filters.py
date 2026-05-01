@@ -7,10 +7,7 @@ class CourseFilter(django_filters.FilterSet):
     """Простые фильтры для каталога курсов"""
 
     search = django_filters.CharFilter(method="filter_search")
-
     category = django_filters.CharFilter(field_name="category__slug")
-    category_id = django_filters.NumberFilter(field_name="category__id")
-
     free_only = django_filters.BooleanFilter(method="filter_free_courses")
 
     class Meta:
@@ -18,7 +15,6 @@ class CourseFilter(django_filters.FilterSet):
         fields = [
             "search",
             "category",
-            "category_id",
             "status",
         ]
 

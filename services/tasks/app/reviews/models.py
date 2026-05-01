@@ -20,7 +20,10 @@ class Review(Base):
     score: Mapped[int] = mapped_column(Integer)
 
     reviewed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now(), index=True
+        DateTime(timezone=True),
+        default=func.now(),
+        onupdate=func.now(),
+        index=True,
     )
 
     submission = relationship("Submission", back_populates="review")

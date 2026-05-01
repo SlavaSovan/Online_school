@@ -25,6 +25,41 @@ from app.sandbox.models import CodeTask
 
 class TaskService:
     @staticmethod
+    async def get_by_lesson_id(
+        db: AsyncSession, lesson_id: int, as_orm: bool = False
+    ) -> list[TaskReadSchema]:
+        """Получение всех заданий по ID урока"""
+
+        if as_orm:
+            result = await db.execute(
+                select(Task).where(Task.lesson_id == lesson_id).order_by(Task.order)
+            )
+            tasks = result.scalars().all()
+            return tasks
+
+        cache_key = f"tasks:lesson:{lesson_id}"
+
+        cached = await RedisCacheClient.get(cache_key)
+        if cached:
+            return [TaskReadSchema(**task_data) for task_data in cached]
+
+        # Получаем из БД
+        result = await db.execute(
+            select(Task).where(Task.lesson_id == lesson_id).order_by(Task.order)
+        )
+        tasks = result.scalars().all()
+
+        # Кэшируем результат
+        tasks_dto = [TaskReadSchema.model_validate(task) for task in tasks]
+        await RedisCacheClient.set(
+            cache_key,
+            [task.model_dump(mode="json") for task in tasks_dto],
+            ttl_seconds=300,
+        )
+
+        return tasks_dto
+
+    @staticmethod
     async def get_by_id(
         db: AsyncSession, task_id: UUID, as_orm: bool = False
     ) -> TaskReadSchema:
@@ -182,6 +217,9 @@ class TaskService:
     @staticmethod
     async def delete(db: AsyncSession, task_id: UUID) -> None:
         task = await TaskService.get_by_id(db, task_id, as_orm=True)
+
+        RedisCacheClient.delete("tasks:lesson:{task.lesson_id}")
+
         await db.delete(task)
         await db.commit()
 

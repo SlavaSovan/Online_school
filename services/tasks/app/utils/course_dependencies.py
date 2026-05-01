@@ -1,6 +1,6 @@
 from fastapi import Request, HTTPException, Depends
 from fastapi.security import HTTPBearer
-from typing import Optional, List, Dict, Any
+from typing import List, Dict, Any
 import logging
 from app.utils.services import CourseService
 from app.utils.permission_checker import IsMentor

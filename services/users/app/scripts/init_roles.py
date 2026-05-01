@@ -84,15 +84,13 @@ async def init_default_roles(db, permissions_map: dict):
 
     if not defaul_role:
         if not user_role:
-            user_permission_ids = [
+            user_permissions = [
                 permissions_map["user:read:own"],
                 permissions_map["user:write:own"],
                 permissions_map["user:read:any"],
             ]
 
-            user_permission_ids = [
-                pid for pid in user_permission_ids if pid is not None
-            ]
+            user_permission_ids = [pid for pid in user_permissions if pid is not None]
 
             role_create = RoleCreate(
                 name="user",
@@ -120,7 +118,31 @@ async def init_default_roles(db, permissions_map: dict):
     else:
         logger.info("Admin role already exists")
 
-    return {"user_role": user_role, "admin_role": admin_role}
+    # Special for courses and tasks microservices
+
+    mentor_role = await role_repo.get_by_name("mentor")
+    if not mentor_role:
+        mentor_permissions = [
+            permissions_map["user:read:own"],
+            permissions_map["user:write:own"],
+            permissions_map["user:read:any"],
+        ]
+
+        mentor_permission_ids = [pid for pid in mentor_permissions if pid is not None]
+
+        role_create = RoleCreate(
+            name="mentor",
+            description="Mentor role with user permissions",
+            is_default=False,
+            permission_ids=mentor_permission_ids,
+        )
+        logger.info("Created mentor role with user permissions")
+
+    return {
+        "user_role": user_role,
+        "admin_role": admin_role,
+        "mentor_role": mentor_role,
+    }
 
 
 async def main():

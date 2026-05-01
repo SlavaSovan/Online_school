@@ -20,10 +20,51 @@ def get_allowed_hosts():
     hosts = os.getenv("DJANGO_ALLOWED_HOSTS", "")
     if hosts:
         return [h.strip() for h in hosts.split(",") if h.strip()]
-    return ["localhost", "127.0.0.1"]
+    return ["localhost", "127.0.0.1", "0.0.0.0"]
 
 
 ALLOWED_HOSTS = get_allowed_hosts()
+
+if DEBUG:
+    # В режиме разработки разрешаем все источники
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOW_CREDENTIALS = True
+else:
+    # В продакшене разрешаем только указанные домены
+    CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if not CORS_ALLOWED_ORIGINS or CORS_ALLOWED_ORIGINS == [""]:
+        CORS_ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ALLOW_CREDENTIALS = True
+
+# Разрешенные HTTP методы
+CORS_ALLOW_METHODS = [
+    "DELETE",
+    "GET",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
+]
+
+# Разрешенные заголовки
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+]
+
+# Настройки для CSRF (нужно для POST/PUT запросов)
+if DEBUG:
+    CSRF_TRUSTED_ORIGINS = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
 
 
 APPEND_SLASH = False
@@ -109,8 +150,8 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     "DEFAULT_AUTHENTICATION_CLASSES": [],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
-    "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.AnonRateThrottle"],
-    "DEFAULT_THROTTLE_RATES": {"anon": "100/hour"},
+    # "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.AnonRateThrottle"],
+    # "DEFAULT_THROTTLE_RATES": {"anon": "100/hour"},
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -140,6 +181,8 @@ USE_TZ = True
 
 USER_SERVICE_URL = os.getenv("USERS_SERVICE_URL", "http://localhost:8001")
 
+
+DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
 
 AWS_ACCESS_KEY_ID = os.getenv("S3_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.getenv("S3_SECRET_ACCESS_KEY", "")
@@ -176,9 +219,6 @@ ALLOWED_CONTENT_TYPES = {
         ".json",
     ],
 }
-
-
-DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
 
 
 CACHES = {

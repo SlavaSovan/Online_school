@@ -34,7 +34,7 @@ async def get_task_and_check_access(
     task = await TaskService.get_by_id(db, task_id)
 
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
-    course_slug = course_info.get("course_slug")
+    course_slug = course_info.get("slug")
 
     if not course_slug:
         raise HTTPException(status_code=404, detail="Course not found")
@@ -53,7 +53,13 @@ async def get_task_and_check_access(
     dependencies=[Depends(IsMentor())],
 )
 @invalidate_cache(
-    keys=["questions:mentor:task:{task_id}*", "questions:student:task:{task_id}*"]
+    keys=[
+        "questions:mentor:task:{task_id}",
+        "questions:student:task:{task_id}",
+        "question:{id}",
+        "question:student:{id}",
+    ],
+    extract_from_result=["id"],
 )
 async def mentor_create_question(
     task_id: UUID,
@@ -76,7 +82,12 @@ async def mentor_create_question(
     dependencies=[Depends(IsMentor())],
 )
 @invalidate_cache(
-    keys=["questions:mentor:task:{task_id}*", "questions:student:task:{task_id}*"],
+    keys=[
+        "questions:mentor:task:{task_id}",
+        "questions:student:task:{task_id}",
+        "question:{question_id}",
+        "question:student:{question_id}",
+    ],
     before_call=True,
 )
 async def mentor_delete_question(

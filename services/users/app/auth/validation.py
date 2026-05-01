@@ -58,6 +58,7 @@ def get_token_payload(token: str) -> dict:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {e}",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     return payload
 
@@ -65,6 +66,12 @@ def get_token_payload(token: str) -> dict:
 def get_current_token_payload(
     token: str = Depends(oauth2_scheme),
 ) -> dict:
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     payload = get_token_payload(token)
     return payload
 
@@ -77,28 +84,41 @@ def validate_token_type(payload: dict, token_type: str) -> bool:
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail=f"Invalid token type {current_token_type!r} expected {token_type!r}",
+        detail=f"Invalid token type: expected {token_type!r}, got {current_token_type!r}",
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
 
 async def get_user_by_token_sub(
     payload: dict, db: AsyncSession = Depends(get_db)
 ) -> User:
-    user_id = int(payload["sub"])
+    try:
+        user_id = int(payload.get("sub"))
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     if not user_id:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+            headers={"WWW-Authenticate": "Bearer"},
         )
+
     user_repo = UserRepository(db)
     user = await user_repo.get_by_id(user_id)
 
-    if user:
-        return user
-    else:
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
         )
+
+    return user
 
 
 async def check_token_blacklist(token: str = Depends(oauth2_scheme)):
@@ -162,9 +182,11 @@ async def get_current_active_user_with_permissions(
 
     result = await db.scalars(stmt)
     user_with_perms = result.one_or_none()
+
     if not user_with_perms:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
         )
 
     return user_with_perms

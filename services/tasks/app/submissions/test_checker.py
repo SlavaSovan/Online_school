@@ -25,6 +25,7 @@ async def check_test_submission(
     task_id: str,
     answers: Dict[str, List[str]],
     task_max_score: int,
+    is_last_attempt: bool = False,
 ) -> tuple[float, Dict]:
 
     result = await db.execute(
@@ -78,18 +79,21 @@ async def check_test_submission(
 
         raw_score += question_score
 
-        feedback.append(
-            {
-                "question_id": q.id,
-                "question_text": q.text,
-                "question_type": q.question_type.value,
-                "score": round(question_score, 3),
-                "max_score": 1,
-                "user_answer": user_answer_texts,
-                "correct_answers": q.correct_answers
-                or [opt.text for opt in q.options if opt.is_correct],
-            }
-        )
+        question_feedback = {
+            "question_id": q.id,
+            "question_text": q.text,
+            "question_type": q.question_type.value,
+            "score": round(question_score, 3),
+            "max_score": 1,
+            "user_answer": user_answer_texts,
+        }
+
+        if is_last_attempt:
+            question_feedback["correct_answers"] = q.correct_answers or [
+                opt.text for opt in q.options if opt.is_correct
+            ]
+
+        feedback.append(question_feedback)
 
     if questions_count > 0:
         scaled_score = (raw_score / questions_count) * task_max_score

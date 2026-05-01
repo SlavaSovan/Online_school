@@ -1,13 +1,15 @@
 import os
 import unicodedata
 import uuid
+import mimetypes
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, AsyncIterator
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from aiobotocore.session import get_session
 from botocore.exceptions import ClientError
 from fastapi import HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 
 from app.core.config import settings
 
@@ -23,10 +25,25 @@ class S3Client:
         self.bucket = settings.S3.S3_BUCKET_NAME
         self.session = get_session()
 
+        # Парсим разрешенные типы файлов
+        self.allowed_file_types = set(
+            ext.strip() for ext in settings.FILES.ALLOWED_FILE_TYPES.split(",")
+        )
+
     @asynccontextmanager
     async def get_client(self):
         async with self.session.create_client("s3", **self.config) as client:
             yield client
+
+    def _get_file_extension(self, filename: str) -> str:
+        """Получает расширение файла без точки"""
+        ext = Path(filename).suffix.lower().lstrip(".")
+        return ext
+
+    def _is_file_type_allowed(self, filename: str) -> bool:
+        """Проверяет, разрешен ли тип файла"""
+        ext = self._get_file_extension(filename)
+        return ext in self.allowed_file_types
 
     def _generate_file_key(
         self,
@@ -41,14 +58,16 @@ class S3Client:
 
         safe_name = Path(filename).name
 
-        name_without_ext, file_extension = os.path.splitext(safe_name)
-
-        ext_clean = file_extension.lstrip(".")
-        if ext_clean not in settings.FILES.ALLOWED_FILE_TYPES:
+        # Проверяем разрешенный тип файла
+        if not self._is_file_type_allowed(safe_name):
+            ext = self._get_file_extension(safe_name)
+            allowed_extensions = ", ".join(sorted(self.allowed_file_types))
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"File type .{file_extension} is not allowed",
+                detail=f"File type '.{ext}' is not allowed. Allowed types: {allowed_extensions}",
             )
+
+        name_without_ext, file_extension = os.path.splitext(safe_name)
 
         file_uuid = str(uuid.uuid4())[:8]
         new_filename = f"{file_uuid}_{safe_name}"
@@ -135,7 +154,141 @@ class S3Client:
                 detail=f"Failed to upload file to S3: {str(e)}",
             )
 
-    async def get_download_url(self, file_key: str, expires_in: int = 3600) -> str:
+    async def download_file(
+        self,
+        file_key: str,
+    ) -> AsyncIterator[bytes]:
+        """
+        Потоковое скачивание файла из S3.
+        Возвращает асинхронный итератор чанков файла.
+        """
+        try:
+            async with self.get_client() as client:
+                response = await client.get_object(
+                    Bucket=self.bucket,
+                    Key=file_key,
+                )
+
+                async for chunk in response["Body"].iter_chunks():
+                    yield chunk
+
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchKey":
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="File not found in storage",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to download file: {str(e)}",
+            )
+
+    async def download_file_as_streaming_response(
+        self,
+        file_key: str,
+        filename: str,
+    ) -> StreamingResponse:
+        """
+        Возвращает StreamingResponse для скачивания файла.
+        """
+        from urllib.parse import quote
+
+        file_stream = self.download_file(file_key)
+
+        # Определяем Content-Type
+        content_type = self._get_content_type(filename)
+        safe_filename = self._sanitize_metadata_value(filename)
+
+        if not safe_filename or safe_filename == ".":
+            # Берем только расширение или используем стандартное имя
+            ext = self._get_file_extension(filename)
+            safe_filename = f"submission.{ext}" if ext else "submission"
+
+        # Создаем заголовок с ASCII именем
+        content_disposition = f'attachment; filename="{safe_filename}"'
+
+        return StreamingResponse(
+            file_stream,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": content_disposition,
+                "Content-Type": content_type,
+            },
+        )
+
+    def _get_content_type(self, filename: str) -> str:
+        """Определяет Content-Type по расширению файла"""
+        ext = self._get_file_extension(filename)
+
+        # Маппинг расширений на Content-Type
+        content_type_map = {
+            # Документы
+            "pdf": "application/pdf",
+            "doc": "application/msword",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "xls": "application/vnd.ms-excel",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xlsm": "application/vnd.ms-excel.sheet.macroenabled.12",
+            "ppt": "application/vnd.ms-powerpoint",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "pptm": "application/vnd.ms-powerpoint.presentation.macroenabled.12",
+            # Текстовые файлы
+            "txt": "text/plain",
+            # Архивы
+            "zip": "application/zip",
+            "rar": "application/x-rar-compressed",
+            # Код
+            "py": "text/x-python",
+            "java": "text/x-java",
+            "cpp": "text/x-c++src",
+            "c": "text/x-csrc",
+            "js": "application/javascript",
+            "html": "text/html",
+            "css": "text/css",
+        }
+
+        content_type = content_type_map.get(ext)
+        if not content_type:
+            # Пробуем определить через mimetypes
+            content_type, _ = mimetypes.guess_type(filename)
+
+        return content_type or "application/octet-stream"
+
+    async def get_public_download_url(
+        self,
+        file_key: str,
+        expires_in: int = 3600,
+    ) -> str:
+        """Получение временной ссылки для скачивания"""
+        public_endpoint = settings.S3.S3_PUBLIC_ENDPOINT
+
+        try:
+            async with self.get_client() as client:
+                url = await client.generate_presigned_url(
+                    "get_object",
+                    Params={
+                        "Bucket": self.bucket,
+                        "Key": file_key,
+                    },
+                    ExpiresIn=expires_in,
+                )
+            internal_endpoint = self.config["endpoint_url"]
+            if internal_endpoint in url:
+                url = url.replace(internal_endpoint, public_endpoint)
+
+            return url
+
+        except ClientError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to generate download URL: {str(e)}",
+            )
+
+    async def get_download_url(
+        self,
+        file_key: str,
+        expires_in: int = 3600,
+    ) -> str:
         """Получение временной ссылки для скачивания"""
         try:
             async with self.get_client() as client:

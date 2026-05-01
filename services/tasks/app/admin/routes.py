@@ -88,7 +88,10 @@ async def admin_list_tasks(
 
 
 @admin_router.post("/tasks/test", response_model=TaskResponseSchema)
-@invalidate_cache(keys=["task:*"])
+@invalidate_cache(
+    keys=["task:{id}", "tasks:lesson:{lesson_id}"],
+    extract_from_result=["id", "lesson_id"],
+)
 async def admin_create_test_task(
     payload: TestTaskCreateByAdminSchema,
     db: AsyncSession = Depends(get_db),
@@ -105,7 +108,10 @@ async def admin_create_test_task(
 
 
 @admin_router.post("/tasks/sandbox", response_model=TaskResponseSchema)
-@invalidate_cache(keys=["task:*"])
+@invalidate_cache(
+    keys=["task:{id}", "tasks:lesson:{lesson_id}"],
+    extract_from_result=["id", "lesson_id"],
+)
 async def admin_create_sandbox_task(
     payload: SandboxTaskCreateByAdminSchema,
     db: AsyncSession = Depends(get_db),
@@ -123,7 +129,10 @@ async def admin_create_sandbox_task(
 
 
 @admin_router.post("/tasks/file", response_model=TaskResponseSchema)
-@invalidate_cache(keys=["task:*"])
+@invalidate_cache(
+    keys=["task:{id}", "tasks:lesson:{lesson_id}"],
+    extract_from_result=["id", "lesson_id"],
+)
 async def admin_create_file_task(
     payload: FileTaskCreateByAdminSchema,
     db: AsyncSession = Depends(get_db),
@@ -149,7 +158,10 @@ async def admin_get_task(
 
 
 @admin_router.patch("/tasks/{task_id}", response_model=TaskResponseSchema)
-@invalidate_cache(keys=["task:{task_id}"])
+@invalidate_cache(
+    keys=["task:{task_id}", "tasks:lesson:{lesson_id}"],
+    extract_from_result=["lesson_id"],
+)
 async def admin_update_task(
     task_id: UUID,
     payload: TaskUpdateSchema,
@@ -262,7 +274,7 @@ async def admin_get_submission(
 
 @admin_router.delete("/submissions/{submission_id}")
 @invalidate_cache(
-    keys=["submission:{submission_id}", "submissions:user:*:task:*"],
+    keys=["submission:{submission_id}"],
     before_call=True,
 )
 async def admin_delete_submission(
@@ -307,8 +319,10 @@ async def list_questions(
     keys=[
         "questions:mentor:task:{task_id}",
         "questions:student:task:{task_id}",
+        "question:{id}",
+        "question:student:{id}",
     ],
-    extract_from_result=["task_id"],
+    extract_from_result=["id", "task_id"],
 )
 async def admin_create_question(
     payload: QuestionCreateByAdminSchema,
@@ -333,11 +347,12 @@ async def admin_get_question(
 @admin_router.patch("/questions/{question_id}", response_model=QuestionResponseSchema)
 @invalidate_cache(
     keys=[
-        "question:{question_id}",
         "questions:mentor:task:{task_id}",
         "questions:student:task:{task_id}",
+        "question:{id}",
+        "question:student:{id}",
     ],
-    extract_from_result=["task_id"],
+    extract_from_result=["id", "task_id"],
 )
 async def admin_update_question(
     question_id: int,
@@ -351,11 +366,10 @@ async def admin_update_question(
 @invalidate_cache(
     keys=[
         "question:{question_id}",
-        "questions:mentor:task:{task_id}",
-        "questions:student:task:{task_id}",
+        "questions:mentor:task:*",
+        "questions:student:task:*",
     ],
     before_call=True,
-    extract_from_result=["task_id"],
 )
 async def admin_delete_question(
     question_id: int,
@@ -365,7 +379,7 @@ async def admin_delete_question(
     task_id = question.task_id
 
     await QuestionService.delete(db, question_id)
-    return {"status": "deleted", "task_id": str(task_id)}
+    return {"status": "deleted"}
 
 
 # ============================= REVIEWS =============================
@@ -419,6 +433,7 @@ async def admin_list_reviews(
 @invalidate_cache(
     keys=[
         "review:*",
+        "submissions:task:*",
         "review:submission:{submission_id}",
         "submission:{submission_id}",
     ],
@@ -455,6 +470,7 @@ async def admin_get_review_by_id(
 @invalidate_cache(
     keys=[
         "review:*",
+        "submissions:task:*",
         "review:submission:{submission_id}",
         "submission:{submission_id}",
     ],
@@ -474,6 +490,7 @@ async def admin_update_review(
 @invalidate_cache(
     keys=[
         "review:*",
+        "submissions:task:*",
         "review:submission:{submission_id}",
         "submission:{submission_id}",
     ],

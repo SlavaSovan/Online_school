@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from fastapi import HTTPException
@@ -120,11 +122,14 @@ class ReviewService:
 
         await ReviewService._validate_review(submission, task, payload.score)
 
+        current_time = datetime.now(timezone.utc)
+
         review = Review(
             submission_id=submission_id,
             mentor_id=mentor_id,
             score=payload.score,
             comment=payload.comment,
+            reviewed_at=current_time,
         )
 
         await ReviewService._update_submission_score(submission, payload.score)
@@ -132,9 +137,7 @@ class ReviewService:
         submission.feedback["review"] = {
             "mentor_id": mentor_id,
             "comment": payload.comment,
-            "reviewed_at": (
-                review.reviewed_at.isoformat() if review.reviewed_at else None
-            ),
+            "reviewed_at": current_time.isoformat(),
             "task_max_score": task.max_score,
         }
 
@@ -215,7 +218,8 @@ class ReviewService:
         if not update_data:
             return ReviewResponseSchema.model_validate(review)
 
-        update_data = payload.model_dump(exclude_unset=True)
+        current_time = datetime.now(timezone.utc)
+        review.reviewed_at = current_time
 
         if "score" in update_data:
             await ReviewService._validate_review(
@@ -228,16 +232,24 @@ class ReviewService:
             await ReviewService._update_submission_score(
                 submission=submission,
                 score=update_data["score"],
-                task_max_score=task.max_score,
             )
 
         if "comment" in update_data:
             review.comment = update_data["comment"]
 
-        if submission.feedback and "review" in submission.feedback:
-            if "comment" in update_data:
-                submission.feedback["review"]["comment"] = review.comment
-            submission.feedback["review"]["updated_at"] = review.reviewed_at.isoformat()
+        if submission.feedback is None:
+            submission.feedback = {}
+
+        if "review" not in submission.feedback:
+            submission.feedback["review"] = {}
+
+        if "score" in update_data:
+            submission.feedback["review"]["score"] = update_data["score"]
+        if "comment" in update_data:
+            submission.feedback["review"]["comment"] = review.comment
+
+        submission.feedback["review"]["reviewed_at"] = current_time.isoformat()
+        flag_modified(submission, "feedback")
 
         try:
             await db.commit()

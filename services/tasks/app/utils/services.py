@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class HTTPClient:
-    """Клиент для HTTP запросов с кешированием и пулом соединений"""
+    """Клиент для HTTP запросов с пулом соединений"""
 
     _client: Optional[httpx.AsyncClient] = None
 
@@ -18,7 +18,10 @@ class HTTPClient:
         if cls._client is None:
             cls._client = httpx.AsyncClient(
                 timeout=30.0,
-                limits=httpx.Limits(max_keepalive_connections=10, max_connections=100),
+                limits=httpx.Limits(
+                    max_keepalive_connections=10,
+                    max_connections=100,
+                ),
                 transport=httpx.AsyncHTTPTransport(retries=3),
             )
         return cls._client
@@ -36,12 +39,6 @@ class UserService:
     @staticmethod
     async def get_user_from_token(token: str) -> Optional[Dict[str, Any]]:
         """Получение информации о пользователе по токену"""
-        cache_key = f"user_token:{token[:20]}"
-
-        cached = await RedisCacheClient.get(cache_key)
-        if cached:
-            return cached
-
         try:
             client = await HTTPClient.get_client()
             headers = {"Authorization": f"Bearer {token}"}
@@ -53,9 +50,7 @@ class UserService:
             )
 
             if response.status_code == 200:
-                user_data = response.json()
-                await RedisCacheClient.set(cache_key, user_data, ttl_seconds=300)
-                return user_data
+                return response.json()
 
         except (httpx.RequestError, httpx.TimeoutException) as e:
             logger.error(f"Failed to get user: {e}")
@@ -107,6 +102,15 @@ class CourseService:
         """Получение детальной информации о курсе"""
         return await CourseService._make_request(
             f"{settings.COURSE_SERVICE_URL}/courses/{course_slug}", token
+        )
+
+    @staticmethod
+    async def get_private_course_detail(
+        course_slug: str, token: str
+    ) -> Optional[Dict[str, Any]]:
+        """Получение детальной информации о курсе"""
+        return await CourseService._make_request(
+            f"{settings.COURSE_SERVICE_URL}/private/courses/{course_slug}", token
         )
 
     @staticmethod
@@ -212,7 +216,9 @@ class CourseService:
         """
         Проверяет, является ли ментор владельцем курса.
         """
-        course_detail = await CourseService.get_course_detail(course_slug, token)
+        course_detail = await CourseService.get_private_course_detail(
+            course_slug, token
+        )
         if not course_detail:
             return False
 
@@ -229,7 +235,9 @@ class CourseService:
         2. Он связан с курсом через таблицу course_mentors
         """
 
-        course_detail = await CourseService.get_course_detail(course_slug, token)
+        course_detail = await CourseService.get_private_course_detail(
+            course_slug, token
+        )
         if not course_detail:
             return False
 
@@ -253,43 +261,9 @@ class CourseService:
         Получение полной информации о курсе по lesson_id.
         Возвращает словарь с информацией о курсе, содержащем данный урок.
         """
-        all_courses = await CourseService.get_all_courses(token)
-
-        for course in all_courses:
-            course_slug = course.get("slug")
-            if not course_slug:
-                continue
-
-            # Получаем детальную информацию о курсе
-            course_detail = await CourseService.get_course_detail(course_slug, token)
-            if not course_detail:
-                continue
-
-            # Ищем урок в модулях курса
-            modules = course_detail.get("modules", [])
-            for module in modules:
-                lessons = module.get("lessons", [])
-                for lesson in lessons:
-                    if lesson.get("id") == lesson_id:
-                        # Нашли нужный урок
-                        return {
-                            "course_id": course_detail.get("id"),
-                            "course_slug": course_detail.get("slug"),
-                            "course_title": course_detail.get("title"),
-                            "module_info": {
-                                "id": module.get("id"),
-                                "slug": module.get("slug"),
-                                "title": module.get("title"),
-                            },
-                            "lesson_info": {
-                                "id": lesson.get("id"),
-                                "title": lesson.get("title"),
-                                "slug": lesson.get("slug"),
-                            },
-                        }
-
-        logger.warning(f"Lesson {lesson_id} not found in any course")
-        return None
+        return await CourseService._make_request(
+            f"{settings.COURSE_SERVICE_URL}/courses/by-lesson/{lesson_id}", token
+        )
 
     @staticmethod
     async def is_user_enrolled_in_course(course_slug: str, token: str) -> bool:

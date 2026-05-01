@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Module
 from apps.lessons.serializers import (
+    LessonLimitedSerializer,
     LessonSerializer,
 )
 
@@ -44,6 +45,23 @@ class ModuleDetailSerializer(serializers.ModelSerializer):
 
 class ModuleWithLessonsSerializer(serializers.ModelSerializer):
     lessons = LessonSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Module
+        fields = (
+            "id",
+            "slug",
+            "title",
+            "description",
+            "order",
+            "lessons",
+        )
+
+
+class ModuleWithLessonsLimitedSerializer(serializers.ModelSerializer):
+    """Сериализатор модуля с уроками без контента и заданий"""
+
+    lessons = LessonLimitedSerializer(many=True, read_only=True)
 
     class Meta:
         model = Module

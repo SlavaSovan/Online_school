@@ -1,6 +1,7 @@
 from django.forms import ValidationError
 from rest_framework import generics, permissions, filters, serializers
 from rest_framework.response import Response
+from rest_framework.pagination import CursorPagination
 from rest_framework.exceptions import PermissionDenied, NotFound
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
@@ -8,9 +9,11 @@ from django.shortcuts import get_object_or_404
 
 from apps.utils.cache_decorator import cache_response
 from apps.utils.cache_invalidator import CacheInvalidator
+from apps.lessons.models import Lesson
 
 from .models import Category, Course, CourseMentor, EnrollmentCache
 from .serializers import (
+    CourseLimitedSerializer,
     CourseListSerializer,
     CourseDetailSerializer,
     CourseCreateUpdateSerializer,
@@ -23,11 +26,43 @@ from .filters import AdminCourseFilter, CourseFilter
 from apps.utils.permission_checker import IsAuthenticated, IsMentor, IsAdmin
 
 
+class CourseAccessMixin:
+    def _check_course_access(self, course):
+        user_id = self.request.user_data.get("id")
+        user_role = self.request.user_data.get("role", {}).get("name")
+
+        if user_role == "admin":
+            return True
+
+        if user_role == "mentor":
+            is_owner = course.owner_mentor_id == user_id
+            is_mentor = CourseMentor.objects.filter(
+                course=course.id, mentor_id=user_id
+            ).exists()
+
+            if is_owner or is_mentor:
+                return True
+
+        return False
+
+
+class CourseCursorPagination(CursorPagination):
+    """Курсорная пагинация для бесконечной ленты"""
+
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 50
+    ordering = "-created_at"
+    cursor_query_param = "cursor"
+
+
 class CourseListView(generics.ListAPIView):
     """Каталог курсов - ТОЛЬКО опубликованные курсы для всех пользователей"""
 
     serializer_class = CourseListSerializer
     permission_classes = [permissions.AllowAny]
+    pagination_class = CourseCursorPagination
+
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,
@@ -47,6 +82,28 @@ class CourseListView(generics.ListAPIView):
         queryset = Course.objects.filter(status="published")
 
         return queryset.select_related("category")
+
+
+class CourseListPrivateView(CourseAccessMixin, generics.ListAPIView):
+
+    serializer_class = CourseListSerializer
+    permission_classes = [IsMentor]
+
+    def get_queryset(self):
+        queryset = Course.objects.select_related("category")
+
+        user_id = self.request.user_data.get("id")
+        user_role = self.request.user_data.get("role", {}).get("name")
+
+        if user_role == "admin":
+            return queryset
+
+        if user_role == "mentor":
+            return queryset.filter(
+                Q(owner_mentor_id=user_id) | Q(mentors__mentor_id=user_id)
+            ).distinct()
+
+        return Course.objects.none()
 
 
 class CategoryListView(generics.ListAPIView):
@@ -76,37 +133,16 @@ class CategoryDetailView(generics.RetrieveAPIView):
         return super().retrieve(request, *args, **kwargs)
 
 
-class CategoryCoursesView(generics.ListAPIView):
-    """Курсы определенной категории с фильтрацией"""
-
-    serializer_class = CourseListSerializer
-    permission_classes = [permissions.AllowAny]
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_class = CourseFilter
-    search_fields = ["title", "description"]
-
-    @cache_response(timeout=300, key_prefix="category_courses")
-    def list(self, request, *args, **kwargs):
-        return super().list(request, *args, **kwargs)
-
-    def get_queryset(self):
-        category_slug = self.kwargs.get("slug")
-
-        category = get_object_or_404(Category, slug=category_slug)
-
-        queryset = Course.objects.filter(
-            status="published", category=category
-        ).select_related("category")
-
-        return queryset.order_by("-created_at")
-
-
 class CourseDetailPublicView(generics.RetrieveAPIView):
     """Детальная информация об опубликованном курсе"""
 
     serializer_class = CourseDetailSerializer
     lookup_field = "slug"
     permission_classes = [permissions.AllowAny]
+
+    def dispatch(self, request, *args, **kwargs):
+        self._set_user_data_to_request()
+        return super().dispatch(request, *args, **kwargs)
 
     @cache_response(timeout=300, key_prefix="course_detail_public")
     def retrieve(self, request, *args, **kwargs):
@@ -123,60 +159,83 @@ class CourseDetailPublicView(generics.RetrieveAPIView):
             )
         )
 
+    def _set_user_data_to_request(self):
+        """Пытается получить данные пользователя из токена, если он есть."""
+        from apps.utils.services import UserService
+
+        token = self.request.headers.get("Authorization")
+        if not token:
+            self.request.user_data = None
+            return None
+
+        token = token.replace("Bearer ", "")
+        self.request.user_data = UserService.get_user_from_token(token=token)
+
     def get_object(self):
         obj = super().get_object()
 
-        if hasattr(obj, "modules_prefetched"):
-            # modules уже prefetched
-            for module in obj.modules_prefetched:
-                if hasattr(module, "lessons_prefetched"):
-                    for lesson in module.lessons_prefetched:
-                        if hasattr(lesson, "content_prefetched"):
-                            lesson.content_prefetched = lesson.content_prefetched
+        user_data = self.request.user_data
+
+        if user_data:
+            user_id = user_data.get("id")
+            user_role = user_data.get("role", {}).get("name")
+        else:
+            user_id = None
+            user_role = None
+
+        self.use_full_info = self._check_full_access(obj, user_id, user_role)
+
+        if not self.use_full_info:
+            self.serializer_class = CourseLimitedSerializer
+        else:
+            self.serializer_class = CourseDetailSerializer
 
         return obj
 
+    def _check_full_access(self, course, user_id, user_role) -> bool:
+        """Проверяет, имеет ли пользователь доступ к полной информации о курсе"""
 
-class CourseDetailPrivateView(generics.RetrieveAPIView):
+        if not user_id:
+            return False
+
+        if user_role == "admin":
+            return True
+
+        if course.owner_mentor_id == user_id:
+            return True
+
+        if CourseMentor.objects.filter(course=course, mentor_id=user_id).exists():
+            return True
+
+        if EnrollmentCache.objects.filter(course=course, user_id=user_id).exists():
+            return True
+
+        return False
+
+
+class CourseDetailPrivateView(CourseAccessMixin, generics.RetrieveAPIView):
     """Детальная информация о курсе, если он не обязательно опубликован"""
 
     serializer_class = CourseDetailSerializer
     lookup_field = "slug"
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsMentor]
 
+    @cache_response(timeout=300, key_prefix="course_detail_private")
     def retrieve(self, request, *args, **kwargs):
-        cache_key_prefix = f"course_detail_private_{kwargs.get('slug')}"
-        return cache_response(timeout=180, key_prefix=cache_key_prefix)(
-            super().retrieve
-        )(request, *args, **kwargs)
+        return super().retrieve(request, *args, **kwargs)
 
     def get_queryset(self):
-        return (
-            Course.objects.all()
-            .select_related("owner_mentor", "category")
-            .prefetch_related("mentors", "modules")
+        return Course.objects.select_related("category").prefetch_related(
+            "mentors",
+            "modules__lessons__content",
+            "modules__lessons__tasks",
         )
 
     def get_object(self):
         course = super().get_object()
 
-        if course.status == "published":
+        if self._check_course_access(course):
             return course
-
-        user_id = self.request.user_data.get("id")
-        user_role = self.request.user_data.get("role", {}).get("name")
-
-        if user_role == "admin":
-            return course
-
-        if user_role == "mentor":
-            is_owner = course.owner_mentor_id == user_id
-            is_mentor = CourseMentor.objects.filter(
-                course=course.id, mentor_id=user_id
-            ).exists()
-
-            if is_owner or is_mentor:
-                return course
 
         raise PermissionDenied("You don't have access to this course")
 
@@ -208,6 +267,12 @@ class CourseUpdateView(generics.UpdateAPIView):
     lookup_field = "slug"
     permission_classes = [IsMentor]
 
+    def get_serializer(self, *args, **kwargs):
+        serializer = super().get_serializer(*args, **kwargs)
+        serializer.fields["owner_mentor_id"].read_only = True
+        serializer.fields["owner_mentor_id"].required = False
+        return serializer
+
     def perform_update(self, serializer):
         course = serializer.save()
 
@@ -225,6 +290,33 @@ class CourseUpdateView(generics.UpdateAPIView):
             raise PermissionDenied("You are not the owner of this course")
 
         return course
+
+
+class CourseDeleteView(generics.DestroyAPIView):
+    """Удаление курса (владелец или администратор)"""
+
+    queryset = Course.objects.all()
+    lookup_field = "slug"
+    permission_classes = [IsMentor]
+
+    def get_object(self):
+        course = super().get_object()
+        user_id = self.request.user_data.get("id")
+        user_role = self.request.user_data.get("role", {}).get("name")
+
+        if user_role == "admin":
+            return course
+
+        if course.owner_mentor_id != user_id:
+            raise PermissionDenied("You are not the owner of this course")
+
+        return course
+
+    def perform_destroy(self, instance):
+        course_slug = instance.slug
+        super().perform_destroy(instance)
+
+        CacheInvalidator.invalidate_course_cache(course_slug=course_slug)
 
 
 class CourseMentorsView(generics.ListCreateAPIView):
@@ -251,7 +343,7 @@ class CourseMentorsView(generics.ListCreateAPIView):
 
     def get_permissions(self):
         if self.request.method == "GET":
-            return [permissions.AllowAny()]
+            return [IsAuthenticated]
         return [IsMentor()]
 
     @cache_response(timeout=300, key_prefix="course_mentors")
@@ -376,9 +468,7 @@ class MyCoursesView(generics.ListAPIView):
         cache_key_prefix = f"my_courses_user_{user_id}"
 
         decorator = cache_response(timeout=180, key_prefix=cache_key_prefix)
-        # Применяем декоратор к super().list
         decorated_method = decorator(super().list)
-        # Вызываем декорированный метод
         return decorated_method(self, request, *args, **kwargs)
 
     def get_queryset(self):
@@ -386,11 +476,69 @@ class MyCoursesView(generics.ListAPIView):
 
         return (
             Course.objects.filter(
-                Q(owner_mentor_id=mentor_id) | Q(mentors__mentor_id=mentor_id)
+                Q(mentors__mentor_id=mentor_id) | Q(owner_mentor_id=mentor_id)
             )
             .distinct()
             .order_by("-created_at")
         )
+
+
+class MyCoursesOwnerView(generics.ListAPIView):
+    """Курсы текущего пользователя как ментора"""
+
+    serializer_class = CourseListSerializer
+    permission_classes = [IsMentor]
+
+    def list(self, request, *args, **kwargs):
+        user_id = self.request.user_data.get("id")
+        cache_key_prefix = f"my_courses_owner_user_{user_id}"
+
+        decorator = cache_response(timeout=180, key_prefix=cache_key_prefix)
+        decorated_method = decorator(super().list)
+        return decorated_method(self, request, *args, **kwargs)
+
+    def get_queryset(self):
+        mentor_id = self.request.user_data.get("id")
+
+        return (
+            Course.objects.filter(owner_mentor_id=mentor_id)
+            .distinct()
+            .order_by("-created_at")
+        )
+
+
+class CourseByLessonIdView(CourseAccessMixin, generics.GenericAPIView):
+    """
+    Получить курс по lesson_id
+    (включая НЕ опубликованные, если есть доступ)
+    """
+
+    serializer_class = CourseDetailSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        lesson_id = kwargs.get("lesson_id")
+
+        lesson = (
+            Lesson.objects.select_related("module__course").filter(id=lesson_id).first()
+        )
+
+        if not lesson:
+            raise NotFound("Lesson not found")
+
+        course = lesson.module.course
+
+        if course.status == "published":
+            return self._build_response(course)
+
+        if self._check_course_access(course):
+            return self._build_response(course)
+
+        raise PermissionDenied("You don't have access to this course")
+
+    def _build_response(self, course):
+        serializer = self.get_serializer(course)
+        return Response(serializer.data)
 
 
 class AdminCourseManagementView(generics.ListCreateAPIView):

@@ -391,6 +391,3 @@ class UserService:
         else:
             if user.is_active:
                 await self.repository.deactivate(user)
-
-    async def get_stats(self) -> dict:
-        return await self.repository.get_stats()

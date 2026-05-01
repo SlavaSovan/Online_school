@@ -1,14 +1,9 @@
-import io
-import os
 import logging
-import tarfile
 import docker
-import tempfile
 import docker.errors
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Optional
-from pathlib import Path
 
 
 logger = logging.getLogger(__name__)

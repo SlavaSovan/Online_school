@@ -6,10 +6,11 @@ from app.core.database import get_db
 from app.tasks.services import TaskService
 from app.utils.cache_decorator import invalidate_cache
 from app.utils.course_dependencies import (
+    CheckMentorCourseAccess,
     CheckUserEnrolledInCourse,
     GetCourseInfoByLessonId,
 )
-from app.utils.permission_checker import IsAuthenticated
+from app.utils.permission_checker import IsAuthenticated, IsMentor
 
 from app.submissions.schemas import (
     FileDownloadResponse,
@@ -32,8 +33,13 @@ router = APIRouter(prefix="", tags=["Submissions"])
     dependencies=[Depends(IsAuthenticated())],
 )
 @invalidate_cache(
-    keys=["submissions:user:{user_id}:task:{task_id}", "submissions:*"],
+    keys=[
+        "submissions:task:{task_id}:user:{user_id}",
+        "submissions:task:{task_id}",
+        "submission:{id}",
+    ],
     extract_user_from_request=True,
+    extract_from_result=["id"],
 )
 async def submit_test_task(
     task_id: UUID,
@@ -56,7 +62,7 @@ async def submit_test_task(
 
     # Проверка прав доступа
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
-    await CheckUserEnrolledInCourse(course_slug=course_info["course_slug"])(request)
+    await CheckUserEnrolledInCourse(course_slug=course_info["slug"])(request)
 
     user = request.state.user_data
 
@@ -74,8 +80,13 @@ async def submit_test_task(
     dependencies=[Depends(IsAuthenticated())],
 )
 @invalidate_cache(
-    keys=["submissions:user:{user_id}:task:{task_id}", "submissions:*"],
+    keys=[
+        "submissions:task:{task_id}:user:{user_id}",
+        "submissions:task:{task_id}",
+        "submission:{id}",
+    ],
     extract_user_from_request=True,
+    extract_from_result=["id"],
 )
 async def submit_sandbox_task(
     task_id: UUID,
@@ -88,7 +99,7 @@ async def submit_sandbox_task(
     """
     task = await TaskService.get_by_id(db, task_id)
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
-    await CheckUserEnrolledInCourse(course_slug=course_info["course_slug"])(request)
+    await CheckUserEnrolledInCourse(course_slug=course_info["slug"])(request)
 
     user = request.state.user_data
 
@@ -106,8 +117,13 @@ async def submit_sandbox_task(
     dependencies=[Depends(IsAuthenticated())],
 )
 @invalidate_cache(
-    keys=["submissions:user:{user_id}:task:{task_id}", "submissions:*"],
+    keys=[
+        "submissions:task:{task_id}:user:{user_id}",
+        "submissions:task:{task_id}",
+        "submission:{id}",
+    ],
     extract_user_from_request=True,
+    extract_from_result=["id"],
 )
 async def submit_file_task(
     task_id: UUID,
@@ -123,7 +139,7 @@ async def submit_file_task(
 
     # Проверка прав доступа
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
-    await CheckUserEnrolledInCourse(course_slug=course_info["course_slug"])(request)
+    await CheckUserEnrolledInCourse(course_slug=course_info["slug"])(request)
 
     user = request.state.user_data
 
@@ -150,14 +166,20 @@ async def download_submission_file(
     # Проверяем доступ к задаче
     task = await TaskService.get_by_id(db, task_id)
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
-    await CheckUserEnrolledInCourse(course_slug=course_info["course_slug"])(request)
 
     user = request.state.user_data
+    user_id = user["id"]
+    user_role = user.get("role", {}).get("name")
 
-    return await SubmissionService.get_download_url(
+    if user_role == "mentor":
+        await CheckMentorCourseAccess(course_slug=course_info["slug"])(request)
+    else:
+        await CheckUserEnrolledInCourse(course_slug=course_info["slug"])(request)
+
+    return await SubmissionService.download_submission_file(
         db=db,
         submission_id=submission_id,
-        user_id=user["id"],
+        user_id=user_id,
         is_admin=False,
     )
 
@@ -167,8 +189,13 @@ async def download_submission_file(
     dependencies=[Depends(IsAuthenticated())],
 )
 @invalidate_cache(
-    keys=["submission:{submission_id}", "submissions:user:*:task:{task_id}"],
+    keys=[
+        "submissions:task:{task_id}:user:{user_id}",
+        "submissions:task:{task_id}",
+        "submission:{submission_id}",
+    ],
     before_call=True,
+    extract_user_from_request=True,
 )
 async def delete_submission(
     task_id: UUID,
@@ -182,7 +209,6 @@ async def delete_submission(
     task = await TaskService.get_by_id(db, task_id)
 
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
-    await CheckUserEnrolledInCourse(course_slug=course_info["course_slug"])(request)
 
     user = request.state.user_data
 
@@ -212,7 +238,7 @@ async def get_task_state(
 
     # Проверка прав доступа
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
-    await CheckUserEnrolledInCourse(course_slug=course_info["course_slug"])(request)
+    await CheckUserEnrolledInCourse(course_slug=course_info["slug"])(request)
 
     user = request.state.user_data
 
@@ -238,12 +264,35 @@ async def get_user_submissions(
 
     # Проверка прав доступа
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
-    await CheckUserEnrolledInCourse(course_slug=course_info["course_slug"])(request)
+    await CheckUserEnrolledInCourse(course_slug=course_info["slug"])(request)
 
     user = request.state.user_data
 
     return await SubmissionService.get_user_submissions_for_task(
         db=db,
         user_id=user["id"],
+        task_id=task_id,
+    )
+
+
+@router.get(
+    "/tasks/{task_id}/submissions/mentor",
+    response_model=list[SubmissionResponseSchema],
+    dependencies=[Depends(IsMentor())],
+)
+async def get_task_submissions(
+    task_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Получение всех отправок пользователя для задачи"""
+    task = await TaskService.get_by_id(db, task_id)
+
+    # Проверка прав доступа
+    course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
+    await CheckMentorCourseAccess(course_slug=course_info["slug"])(request)
+
+    return await SubmissionService.get_submissions_for_task(
+        db=db,
         task_id=task_id,
     )

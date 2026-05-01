@@ -15,21 +15,20 @@ class SubmissionResponseSchema(BaseModel):
     attempt: int
     status: SubmissionStatus
 
-    score: Optional[int] = None
+    score: Optional[float] = None
     feedback: Optional[Dict[str, Any]]
 
-    has_file: bool = False
     file_info: Optional[Dict[str, Any]] = None
+    code: Optional[str] = None
 
     created_at: datetime
 
     @classmethod
     def from_orm(cls, submission: Submission):
         """Добавляем информацию о файле"""
-        has_file = bool(submission.s3_file_key)
-        file_info = None
 
-        if has_file:
+        file_info = None
+        if submission.s3_file_key:
             file_info = {
                 "s3_file_key": submission.s3_file_key,
                 "file_size": submission.file_size,
@@ -40,6 +39,10 @@ class SubmissionResponseSchema(BaseModel):
                 ),
             }
 
+        code = None
+        if submission.payload and submission.payload.get("type") == "sandbox":
+            code = submission.payload.get("code")
+
         return cls(
             id=submission.id,
             task_id=submission.task_id,
@@ -48,8 +51,8 @@ class SubmissionResponseSchema(BaseModel):
             status=submission.status,
             score=submission.score,
             feedback=submission.feedback,
-            has_file=has_file,
             file_info=file_info,
+            code=code,
             created_at=submission.created_at,
         )
 

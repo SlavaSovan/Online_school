@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.tasks.services import TaskService
 from app.utils.course_dependencies import (
+    CheckMentorCourseAccess,
     CheckUserEnrolledInCourse,
     GetCourseInfoByLessonId,
 )
@@ -45,15 +46,21 @@ async def run_code(
         )
 
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
-    await CheckUserEnrolledInCourse(course_slug=course_info["course_slug"])(request)
+
+    user = request.state.user_data
+    user_id = user["id"]
+    user_role = user.get("role", {}).get("name")
+
+    if user_role == "mentor":
+        await CheckMentorCourseAccess(course_slug=course_info["slug"])(request)
+    else:
+        await CheckUserEnrolledInCourse(course_slug=course_info["slug"])(request)
 
     from app.submissions.services import SubmissionService
 
-    user = request.state.user_data
-
     task_state = await SubmissionService.get_task_state(
         db=db,
-        user_id=user["id"],
+        user_id=user_id,
         task_id=task_id,
     )
 

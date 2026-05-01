@@ -12,14 +12,29 @@ urlpatterns = [
         name="course-update",
     ),
     path(
+        "courses/<slug:slug>/delete",
+        views.CourseDeleteView.as_view(),
+        name="course-delete",
+    ),
+    path(
         "courses/<slug:slug>",
         views.CourseDetailPublicView.as_view(),
         name="course-detail-public",
     ),
     path(
+        "courses/by-lesson/<int:lesson_id>",
+        views.CourseByLessonIdView.as_view(),
+        name="course-by-lesson-id",
+    ),
+    path(
         "private/courses/<slug:slug>",
         views.CourseDetailPrivateView.as_view(),
         name="course-detail-private",
+    ),
+    path(
+        "private/courses",
+        views.CourseListPrivateView.as_view(),
+        name="course-private",
     ),
     # ==================== КАТЕГОРИИ ====================
     path("categories", views.CategoryListView.as_view(), name="category-list"),
@@ -28,13 +43,11 @@ urlpatterns = [
         views.CategoryDetailView.as_view(),
         name="category-detail",
     ),
-    path(
-        "categories/<slug:slug>/courses",
-        views.CategoryCoursesView.as_view(),
-        name="category-courses",
-    ),
     # ==================== ЛИЧНЫЕ ДАННЫЕ ====================
     path("my/courses", views.MyCoursesView.as_view(), name="my-courses"),
+    path(
+        "my/courses-owner", views.MyCoursesOwnerView.as_view(), name="my-courses-owner"
+    ),
     path("my/enrollments", views.MyEnrollmentsView.as_view(), name="my-enrollments"),
     # ==================== МЕНТОРЫ КУРСА ====================
     path(

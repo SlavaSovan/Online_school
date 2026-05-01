@@ -22,7 +22,7 @@ urlpatterns = [
         name="lesson-content-detail",
     ),
     path(
-        "lessons/<slug:lesson_slug>/content/<int:content_id>/display",
+        "lessons/<slug:lesson_slug>/content/<int:id>/display",
         views.LessonContentDisplayView.as_view(),
         name="lesson-content-display",
     ),

@@ -224,7 +224,7 @@ async def logout(
                 now = datetime.now().timestamp()
                 expires_in = max(0, int(exp - now))
                 if expires_in > 0:
-                    await blacklist.add_to_blacklist(access_token, expires_in, "access")
+                    await blacklist.add_to_blacklist(access_token, expires_in)
         except Exception as e:
             logger.error(f"Failed to blacklist access token: {e}")
     return {"message": "Logged out"}

@@ -327,37 +327,3 @@ class UserRepository:
 
         result = await self.db.scalars(stmt)
         return result.first() is not None
-
-    async def get_stats(self) -> dict:
-        # Общее количество активных пользователей
-        total_active = (
-            await self.db.scalar(
-                select(func.count(User.id)).where(User.is_active == True)
-            )
-            or 0
-        )
-
-        # Общее количество неактивных пользователей
-        total_inactive = (
-            await self.db.scalar(
-                select(func.count(User.id)).where(User.is_active == False)
-            )
-            or 0
-        )
-
-        # Количество пользователей по ролям
-        stmt = (
-            select(Role.name, func.count(User.id).label("count"))
-            .outerjoin(User, Role.id == User.role_id)
-            .where(User.is_active == True)
-            .group_by(Role.name)
-        )
-
-        result = await self.db.execute(stmt)
-        by_role = {role: count for role, count in result}
-
-        return {
-            "total_active": total_active,
-            "total_inactive": total_inactive,
-            "by_role": by_role,
-        }

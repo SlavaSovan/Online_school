@@ -102,7 +102,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("score", sa.Integer(), nullable=True),
-        sa.Column("max_score", sa.Integer(), nullable=True),
+        sa.Column("max_score", sa.Float(), nullable=True),
         sa.Column("payload", sa.JSON(), nullable=False),
         sa.Column("feedback", sa.JSON(), nullable=True),
         sa.Column("s3_file_key", sa.String(length=500), nullable=True),

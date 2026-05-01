@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from django.conf import settings
 from rest_framework import serializers
 from .models import Lesson, LessonContent, LessonTask
 
@@ -25,6 +26,7 @@ class LessonContentSerializer(serializers.ModelSerializer):
         )
         read_only_fields = (
             "id",
+            "content_type",
             "file_url",
             "filename",
             "file_size",
@@ -47,62 +49,21 @@ class LessonContentSerializer(serializers.ModelSerializer):
         """Возвращаем размер файла"""
         return obj.file_size
 
-    def validate(self, data):
-        content_type = data.get("content_type")
-        file = data.get("file")
+    def _get_content_type_from_extension(self, filename):
+        """
+        Определяет content_type по расширению файла.
+        Возвращает content_type или None, если расширение не найдено.
+        """
+        ext = os.path.splitext(filename)[1].lower()
 
-        if not self.instance:
-            if not content_type:
-                raise serializers.ValidationError(
-                    {"content_type": "This field is required."}
-                )
-            if not file:
-                raise serializers.ValidationError({"file": "This field is required."})
+        for content_type, extensions in settings.ALLOWED_CONTENT_TYPES.items():
+            if ext in extensions:
+                return content_type
 
-            self.validate_file_extension(file, content_type)
-            self.validate_file_size(file, content_type)
+        return None
 
-            # if content_type == "markdown":
-            #     self.validate_markdown_file(file)
-            # elif content_type == "image":
-            #     self.validate_image_file(file)
-            # elif content_type == "video":
-            #     self.validate_video_file(file)
-
-        if (
-            self.instance
-            and content_type
-            and content_type != self.instance.content_type
-            and not file
-        ):
-            raise serializers.ValidationError(
-                {"file": "New file is required when changing content type."}
-            )
-
-        return data
-
-    def validate_file_extension(self, file, content_type):
-        """Проверка расширения файла"""
-        from django.conf import settings
-
-        filename = file.name.lower()
-        allowed_extensions = settings.ALLOWED_CONTENT_TYPES.get(content_type, [])
-
-        if not allowed_extensions:
-            raise serializers.ValidationError(f"Invalid content type: {content_type}")
-
-        _, ext = os.path.splitext(filename)
-
-        if ext not in allowed_extensions:
-            allowed_str = ", ".join(allowed_extensions)
-            raise serializers.ValidationError(
-                f"Invalid file extension for {content_type}. "
-                f"Allowed extensions: {allowed_str}"
-            )
-
-    def validate_file_size(self, file, content_type):
+    def _validate_file_size(self, file, content_type):
         """Проверка размера файла"""
-        from django.conf import settings
 
         max_sizes = {
             "markdown": 5 * 1024 * 1024,  # 5MB
@@ -122,95 +83,29 @@ class LessonContentSerializer(serializers.ModelSerializer):
                 f"for {content_type} content"
             )
 
-    # def validate_markdown_file(self, file):
-    #     """Дополнительная валидация для Markdown файлов"""
-    #     filename = file.name.lower()
+    def validate(self, data):
+        file = data.get("file")
 
-    #     if not filename.endswith((".md", ".markdown")):
-    #         raise serializers.ValidationError(
-    #             "Markdown files must have .md or .markdown extension"
-    #         )
+        if not self.instance and not file:
+            raise serializers.ValidationError({"file": "File is required."})
 
-    #     try:
-    #         file.seek(0)
-    #         content = file.read(1024).decode("utf-8", errors="ignore")
-    #     except UnicodeDecodeError:
-    #         raise serializers.ValidationError("Markdown file must be a valid text file")
-    #     finally:
-    #         file.seek(0)
+        if file:
+            content_type = self._get_content_type_from_extension(file.name)
 
-    # def validate_image_file(self, file):
-    #     """Валидация с использованием python-magic"""
-    #     try:
-    #         import magic
+            if not content_type:
+                allowed_extensions = []
+                for extensions in settings.ALLOWED_CONTENT_TYPES.values():
+                    allowed_extensions.extend(extensions)
 
-    #         file.seek(0)
-    #         file_data = file.read(2048)
+                allowed_extensions_str = ", ".join(sorted(set(allowed_extensions)))
+                raise serializers.ValidationError(
+                    f"Unsupported file type. Allowed extensions: {allowed_extensions_str}"
+                )
 
-    #         mime_type = magic.from_buffer(file_data, mime=True)
+            data["content_type"] = content_type
+            self._validate_file_size(file, content_type)
 
-    #         allowed_types = [
-    #             "image/jpg",
-    #             "image/jpeg",
-    #             "image/png",
-    #             "image/gif",
-    #             "image/bmp",
-    #             "image/webp",
-    #             "image/svg",
-    #         ]
-
-    #         if mime_type not in allowed_types:
-    #             raise serializers.ValidationError(
-    #                 f"Unsupported image format: {mime_type}"
-    #             )
-
-    #     except ImportError:
-    #         pass
-    #     finally:
-    #         file.seek(0)
-
-    #     if file.size == 0:
-    #         raise serializers.ValidationError("Image file cannot be empty")
-
-    # def validate_video_file(self, file):
-    #     """Дополнительная валидация для видео файлов"""
-    #     try:
-    #         import magic
-
-    #         file.seek(0)
-    #         mime_type = magic.from_buffer(file.read(2048), mime=True)
-
-    #         allowed_types = {
-    #             ".mp4": ["video/mp4", "video/x-mp4"],
-    #             ".avi": ["video/x-msvideo", "video/avi"],
-    #             ".mov": ["video/quicktime"],
-    #             ".wmv": ["video/x-ms-wmv"],
-    #             ".flv": ["video/x-flv"],
-    #             ".mkv": ["video/x-matroska"],
-    #             ".webm": ["video/webm"],
-    #             ".m4v": ["video/x-m4v", "video/mp4"],
-    #         }
-
-    #         file_ext = os.path.splitext(file.name)[1].lower()
-    #         allowed_mimes = allowed_types.get(file_ext, [])
-
-    #         if allowed_mimes and mime_type not in allowed_mimes:
-    #             raise serializers.ValidationError(
-    #                 f"The file extension and type mismatch: {file_ext}."
-    #             )
-
-    #     except ImportError:
-    #         pass
-    #     except Exception as e:
-    #         import logging
-
-    #         logger = logging.getLogger(__name__)
-    #         logger.warning(f"Failed to check video MIME type: {e}")
-    #     finally:
-    #         file.seek(0)
-
-    #     if file.size == 0:
-    #         raise serializers.ValidationError("Video file cannot be empty")
+        return data
 
     def create(self, validated_data):
         """Создание нового контента"""
@@ -223,11 +118,9 @@ class LessonContentSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         """Обновление существующего контента"""
         file = validated_data.get("file")
-
         if file and "original_filename" not in validated_data:
             validated_data["original_filename"] = file.name
-
-        return instance
+        return super().update(instance, validated_data)
 
 
 class LessonTaskSerializer(serializers.ModelSerializer):
@@ -265,6 +158,22 @@ class LessonSerializer(serializers.ModelSerializer):
             qs = obj.content.all().order_by("order")
 
         return LessonContentSerializer(qs, many=True, context=self.context).data
+
+
+class LessonLimitedSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lesson
+        fields = (
+            "id",
+            "slug",
+            "title",
+            "module",
+            "order",
+            "is_published",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "slug", "created_at", "updated_at")
 
 
 class LessonContentDisplaySerializer(serializers.ModelSerializer):

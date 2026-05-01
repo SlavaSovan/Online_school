@@ -41,6 +41,7 @@ class S3Settings(BaseModel):
     S3_ENDPOINT_URL: str
     S3_REGION: str
     S3_BUCKET_NAME: str
+    S3_PUBLIC_ENDPOINT: str = "http://localhost:9000"
 
 
 class FileSettings(BaseModel):

@@ -34,6 +34,7 @@ class CacheKeyBuilder:
 
         # Добавляем дополнительные параметры
         for key, value in sorted(kwargs.items()):
-            key_parts.append(f"{key}_{value}")
+            if value is not None:
+                key_parts.append(f"{key}_{value}")
 
         return "_".join(key_parts)

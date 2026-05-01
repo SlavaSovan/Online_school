@@ -29,6 +29,15 @@ class Lesson(models.Model):
             self.slug = slugify(self.title)
         super().save(*args, **kwargs)
 
+        if self.module and self.module.course:
+            self.module.course.update_lessons_count()
+
+    def delete(self, *args, **kwargs):
+        course = self.module.course if self.module else None
+        super().delete(*args, **kwargs)
+        if course:
+            course.update_lessons_count()
+
 
 class LessonContent(models.Model):
     CONTENT_TYPES = [

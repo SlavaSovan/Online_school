@@ -160,11 +160,42 @@ class SubmissionService:
         return submission
 
     @staticmethod
+    async def get_submissions_for_task(
+        db: AsyncSession,
+        task_id: UUID,
+    ) -> List[SubmissionResponseSchema]:
+        cache_key = f"submissions:task:{task_id}"
+        cached = await RedisCacheClient.get(cache_key)
+
+        if cached:
+            return [SubmissionResponseSchema(**item) for item in cached]
+
+        result = await db.execute(
+            select(Submission)
+            .where(Submission.task_id == task_id)
+            .order_by(Submission.created_at.desc())
+        )
+        submissions = result.scalars().all()
+
+        schemas = [SubmissionResponseSchema.from_orm(sub) for sub in submissions]
+
+        if schemas:
+            await RedisCacheClient.set(
+                cache_key,
+                [s.model_dump(mode="json") for s in schemas],
+                ttl_seconds=300,
+            )
+
+        return schemas
+
+    @staticmethod
     async def get_user_submissions_for_task(
-        db: AsyncSession, user_id: int, task_id: UUID
+        db: AsyncSession,
+        user_id: int,
+        task_id: UUID,
     ) -> List[SubmissionResponseSchema]:
         """Получение отправок пользователя для задачи"""
-        cache_key = f"submissions:user:{user_id}:task:{task_id}"
+        cache_key = f"submissions:task:{task_id}:user:{user_id}"
         cached = await RedisCacheClient.get(cache_key)
 
         if cached:
@@ -243,6 +274,8 @@ class SubmissionService:
         task = await SubmissionService._validate_task(db, task_id, TaskType.TEST)
 
         attempt = await SubmissionService._check_attempts_limit(db, task, user_id)
+        max_attempts = task.max_attempts
+        is_last_attempt = attempt == max_attempts
 
         submission = Submission(
             user_id=user_id,
@@ -257,6 +290,7 @@ class SubmissionService:
             task_id=task.id,
             answers=payload.answers,
             task_max_score=task.max_score,
+            is_last_attempt=is_last_attempt,
         )
 
         submission.score = score
@@ -428,19 +462,22 @@ class SubmissionService:
         is_admin: bool = False,
     ) -> FileDownloadResponse:
         """Получение ссылки для скачивания файла"""
-        submission = await SubmissionService.get_by_id(db, submission_id)
+        submission_orm = await SubmissionService._get_submission_orm(db, submission_id)
 
         if not is_admin and user_id:
-            if submission.user_id != user_id:
+            if submission_orm.user_id != user_id:
                 raise HTTPException(status_code=404, detail="Submission not found")
 
-        if not submission.s3_file_key:
-            raise HTTPException(status_code=404, detail="No file attached")
+        if not submission_orm.s3_file_key:
+            raise HTTPException(
+                status_code=404,
+                detail="No file attached to this submission",
+            )
 
-        download_url = await s3_client.get_download_url(submission.s3_file_key)
+        s3_file_key = submission_orm.s3_file_key
+        download_url = await s3_client.get_public_download_url(s3_file_key)
 
-        # Получаем имя файла из payload
-        original_filename = submission.payload.get(
+        original_filename = submission_orm.payload.get(
             "original_filename", f"submission_{submission_id}"
         )
 
@@ -448,6 +485,35 @@ class SubmissionService:
             download_url=download_url,
             filename=original_filename,
             expires_at=datetime.now() + timedelta(hours=1),
+        )
+
+    @staticmethod
+    async def download_submission_file(
+        db: AsyncSession,
+        submission_id: int,
+        user_id: Optional[int] = None,
+        is_admin: bool = False,
+    ):
+        """Скачивание файла решения"""
+        submission_orm = await SubmissionService._get_submission_orm(db, submission_id)
+
+        if not is_admin and user_id:
+            if submission_orm.user_id != user_id:
+                raise HTTPException(status_code=404, detail="Submission not found")
+
+        if not submission_orm.s3_file_key:
+            raise HTTPException(
+                status_code=404,
+                detail="No file attached to this submission",
+            )
+
+        original_filename = submission_orm.payload.get(
+            "original_filename", f"submission_{submission_id}"
+        )
+
+        return await s3_client.download_file_as_streaming_response(
+            file_key=submission_orm.s3_file_key,
+            filename=original_filename,
         )
 
     @staticmethod

@@ -48,7 +48,10 @@ def process_redis_event(redis_client):
     """Обработка событий Redis"""
     try:
 
-        event_data = redis_client.blpop("tasks_events_queue", timeout=5)
+        event_data = redis_client.blpop(
+            "tasks_events_queue",
+            timeout=5,
+        )
 
         if not event_data:
             return

@@ -37,7 +37,7 @@ class ModuleListView(generics.ListCreateAPIView):
 
     def get_permissions(self):
         if self.request.method == "GET":
-            return [permissions.AllowAny()]
+            return [IsAuthenticated()]
         return [IsMentor()]
 
     def list(self, request, *args, **kwargs):
@@ -105,7 +105,6 @@ class ModuleDetailView(generics.RetrieveUpdateDestroyAPIView):
     """Детали модуля, обновление, удаление"""
 
     serializer_class = ModuleDetailSerializer
-    permission_classes = [IsAuthenticated]
     lookup_field = "slug"
 
     def get_permissions(self):
@@ -134,9 +133,9 @@ class ModuleDetailView(generics.RetrieveUpdateDestroyAPIView):
         module_slug = kwargs.get("module_slug")
         cache_key_prefix = f"module_detail_{course_slug}_{module_slug}"
 
-        return cache_response(timeout=300, key_prefix=cache_key_prefix)(
-            super().retrieve
-        )(request, *args, **kwargs)
+        decorator = cache_response(timeout=300, key_prefix=cache_key_prefix)
+        decorated_method = decorator(super().retrieve)
+        return decorated_method(self, request, *args, **kwargs)
 
     def get_object(self):
         queryset = self.get_queryset()
@@ -150,7 +149,7 @@ class ModuleDetailView(generics.RetrieveUpdateDestroyAPIView):
         module = queryset.first()
 
         if self.request.method == "GET":
-            self._check_view_permissions
+            return self._check_view_permissions(module)
 
         return self._check_edit_permissions(module)
 

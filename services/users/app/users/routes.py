@@ -24,11 +24,11 @@ from app.users.schemas import (
     RoleUpdate,
     UserCreate,
     UserDetailResponse,
+    UserListDetailResponse,
     UserListResponse,
     UserResponse,
     UserUpdate,
 )
-
 
 permissions_router = APIRouter(prefix="/permissions", tags=["permissions"])
 roles_router = APIRouter(prefix="/roles", tags=["roles"])
@@ -247,7 +247,7 @@ async def remove_permission_from_role(
 # =============================== ОСНОВНЫЕ ПУТИ ================================
 
 
-@users_router.get("", response_model=UserListResponse)
+@users_router.get("", response_model=UserListDetailResponse)
 @handle_user_errors
 async def get_all_users(
     skip: int = Query(0, ge=0, description="Skip N records"),
@@ -259,8 +259,8 @@ async def get_all_users(
         skip=skip, limit=limit, include_inactive=include_inactive
     )
 
-    return UserListResponse(
-        users=[UserResponse.model_validate(u) for u in users], total=total
+    return UserListDetailResponse(
+        users=[UserDetailResponse.model_validate(u) for u in users], total=total
     )
 
 
@@ -272,14 +272,6 @@ async def create_user(
 ):
     user = await user_service.create_user(user_data)
     return UserResponse.model_validate(user)
-
-
-@users_router.get("/stats", response_model=dict)
-@handle_user_errors
-async def get_user_stats(
-    user_service: UserService = Depends(get_user_service_for_manage),
-):
-    return await user_service.get_stats()
 
 
 @users_router.get("/roles/{role_id}", response_model=UserListResponse)

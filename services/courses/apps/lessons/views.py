@@ -2,7 +2,7 @@ from pathlib import Path
 from rest_framework import generics, filters
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Prefetch
@@ -354,7 +354,7 @@ class LessonContentListView(generics.ListCreateAPIView, LessonAccessMixin):
         if not self._check_edit_permissions(lesson, user_id, user_role):
             raise PermissionDenied("You don't have permission to edit this lesson")
 
-        content = serializer.save(lesson=lesson)
+        serializer.save(lesson=lesson)
 
         CacheInvalidator.invalidate_lesson_cache(
             course_slug=course_slug, module_slug=module_slug, lesson_slug=lesson_slug
@@ -365,6 +365,7 @@ class LessonContentDetailView(generics.RetrieveUpdateDestroyAPIView, LessonAcces
     """Детали контента, обновление, удаление"""
 
     serializer_class = LessonContentSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     lookup_field = "id"
 
     def get_permissions(self):
@@ -397,7 +398,7 @@ class LessonContentDetailView(generics.RetrieveUpdateDestroyAPIView, LessonAcces
 
         return content
 
-    def perform_update(self, serializer):
+    def perform_update(self, serializer, *args, **kwargs):
         content = serializer.save()
         lesson = content.lesson
 
@@ -430,13 +431,12 @@ class LessonContentDisplayView(generics.RetrieveAPIView, LessonAccessMixin):
     serializer_class = LessonContentDisplaySerializer
     permission_classes = [IsAuthenticated]
     lookup_field = "id"
-    lookup_url_kwarg = "content_id"
 
     def get_queryset(self):
         course_slug = self.kwargs.get("course_slug")
         module_slug = self.kwargs.get("module_slug")
         lesson_slug = self.kwargs.get("lesson_slug")
-        content_id = self.kwargs.get("content_id")
+        content_id = self.kwargs.get("id")
 
         return LessonContent.objects.filter(
             id=content_id,
@@ -461,7 +461,7 @@ class LessonContentDisplayView(generics.RetrieveAPIView, LessonAccessMixin):
         course_slug = kwargs.get("course_slug")
         module_slug = kwargs.get("module_slug")
         lesson_slug = kwargs.get("lesson_slug")
-        content_id = kwargs.get("content_id")
+        content_id = kwargs.get("id")
 
         cache_key_prefix = f"lesson_content_display_{course_slug}_{module_slug}_{lesson_slug}_{content_id}"
 

@@ -141,7 +141,12 @@ class UserDetailResponse(UserResponse):
 
 
 class UserListResponse(BaseModel):
-    users: list[UserResponse]
+    users: List[UserResponse]
+    total: int
+
+
+class UserListDetailResponse(BaseModel):
+    users: List[UserDetailResponse]
     total: int
 
 

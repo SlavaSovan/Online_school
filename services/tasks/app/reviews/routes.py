@@ -37,7 +37,7 @@ async def validate_review_access(
     )
 
     course_info = await GetCourseInfoByLessonId(task.lesson_id)(request)
-    course_slug = course_info["course_slug"]
+    course_slug = course_info["slug"]
 
     if check_mentor:
         await CheckMentorCourseAccess(course_slug=course_slug)(request)
@@ -51,7 +51,13 @@ async def validate_review_access(
     dependencies=[Depends(IsMentor())],
 )
 @invalidate_cache(
-    keys=["review:submission:{submission_id}", "submission:{submission_id}"]
+    keys=[
+        "review:submission:{submission_id}",
+        "submission:{submission_id}",
+        "submissions:task:{task_id}",
+        "submissions:task:{task_id}:user:{user_id}",
+    ],
+    extract_user_from_request=True,
 )
 async def mentor_create_review(
     task_id: UUID,
@@ -76,9 +82,6 @@ async def mentor_create_review(
     response_model=ReviewResponseSchema,
     dependencies=[Depends(IsAuthenticated())],
 )
-@invalidate_cache(
-    keys=["review:submission:{submission_id}", "submission:{submission_id}"]
-)
 async def get_review(
     task_id: UUID,
     submission_id: int,
@@ -97,7 +100,13 @@ async def get_review(
     dependencies=[Depends(IsMentor())],
 )
 @invalidate_cache(
-    keys=["review:submission:{submission_id}", "submission:{submission_id}"]
+    keys=[
+        "review:submission:{submission_id}",
+        "submission:{submission_id}",
+        "submissions:task:{task_id}",
+        "submissions:task:{task_id}:user:{user_id}",
+    ],
+    extract_user_from_request=True,
 )
 async def mentor_update_review(
     task_id: UUID,
@@ -121,8 +130,14 @@ async def mentor_update_review(
     dependencies=[Depends(IsMentor())],
 )
 @invalidate_cache(
-    keys=["review:submission:{submission_id}", "submission:{submission_id}"],
+    keys=[
+        "review:submission:{submission_id}",
+        "submission:{submission_id}",
+        "submissions:task:{task_id}",
+        "submissions:task:{task_id}:user:{user_id}",
+    ],
     before_call=True,
+    extract_user_from_request=True,
 )
 async def mentor_delete_review(
     task_id: UUID,

@@ -1,10 +1,10 @@
 from rest_framework import serializers
 
-from apps.modules.serializers import ModuleWithLessonsSerializer
+from apps.modules.serializers import (
+    ModuleWithLessonsLimitedSerializer,
+    ModuleWithLessonsSerializer,
+)
 from .models import Category, Course, CourseMentor, EnrollmentCache
-from django.utils.text import slugify
-
-# from ..utils.current_user import verify_payment_for_enrollment
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -39,8 +39,6 @@ class CourseDetailSerializer(serializers.ModelSerializer):
     modules = serializers.SerializerMethodField()
     mentors = serializers.SerializerMethodField()
 
-    modules_count = serializers.SerializerMethodField()
-
     class Meta:
         model = Course
         fields = (
@@ -51,7 +49,6 @@ class CourseDetailSerializer(serializers.ModelSerializer):
             "owner_mentor_id",
             "price",
             "lessons_count",
-            "modules_count",
             "mentors",
             "modules",
             "status",
@@ -69,11 +66,33 @@ class CourseDetailSerializer(serializers.ModelSerializer):
         mentors_qs = obj.mentors.all()
         return CourseMentorSerializer(mentors_qs, many=True).data
 
-    def get_modules_count(self, obj):
-        """Количество модулей - можно получить из prefetch_related"""
-        if hasattr(obj, "modules_prefetched"):
-            return len(obj.modules_prefetched)
-        return obj.modules.count()
+
+class CourseLimitedSerializer(serializers.ModelSerializer):
+    """Сжатый сериализатор для курса (без контента и заданий)"""
+
+    modules = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Course
+        fields = (
+            "id",
+            "slug",
+            "title",
+            "description",
+            "owner_mentor_id",
+            "price",
+            "lessons_count",
+            "modules",
+            "status",
+            "category",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "slug", "created_at", "updated_at")
+
+    def get_modules(self, obj):
+        qs = obj.modules.all().order_by("order")
+        return ModuleWithLessonsLimitedSerializer(qs, many=True).data
 
 
 class CourseCreateUpdateSerializer(serializers.ModelSerializer):
